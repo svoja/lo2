@@ -1,0 +1,20 @@
+version: '3'
+services:
+  frontend:
+    build: ./frontend
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+
+  nginx:
+    image: nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - backend
+
+  db:
+    image: mysql
