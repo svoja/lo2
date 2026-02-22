@@ -86,7 +86,10 @@ export default function ShipmentList() {
           <thead className="bg-slate-50">
             <tr>
               <th className="px-4 py-3 font-semibold text-slate-700">Shipment ID</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
               <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Departure</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Arrival</th>
               <th className="px-4 py-3 font-semibold text-slate-700">Total Volume (m³)</th>
               <th className="px-4 py-3 font-semibold text-slate-700">Cartons</th>
               <th className="px-4 py-3 font-semibold text-slate-700">Truck Capacity</th>
@@ -97,7 +100,7 @@ export default function ShipmentList() {
           <tbody className="divide-y divide-slate-200">
             {shipments.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                   No shipments.
                 </td>
               </tr>
@@ -109,8 +112,17 @@ export default function ShipmentList() {
                       {s.shipment_id}
                     </Link>
                   </td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {s.shipment_type ?? 'Outbound'}
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={s.status} />
+                  </td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {s.departure_time ? new Date(s.departure_time).toLocaleString() : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {s.arrival_time ? new Date(s.arrival_time).toLocaleString() : '—'}
                   </td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">
                     {s.total_volume != null ? Number(s.total_volume).toLocaleString() : '—'}
@@ -186,6 +198,7 @@ function CreateShipmentForm({ branches, trucks, onSubmit, onCancel, isSubmitting
   const [origin_branch_id, setOriginBranchId] = useState(branches[0]?.branch_id ?? '');
   const [destination_branch_id, setDestinationBranchId] = useState(branches[0]?.branch_id ?? '');
   const [truck_id, setTruckId] = useState('');
+  const [shipment_type, setShipmentType] = useState('Outbound');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -193,6 +206,7 @@ function CreateShipmentForm({ branches, trucks, onSubmit, onCancel, isSubmitting
       origin_branch_id: Number(origin_branch_id),
       destination_branch_id: Number(destination_branch_id),
       truck_id: truck_id === '' ? undefined : Number(truck_id),
+      shipment_type,
     });
   };
 
@@ -227,6 +241,17 @@ function CreateShipmentForm({ branches, trucks, onSubmit, onCancel, isSubmitting
           {branches.map((b) => (
             <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
           ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-slate-700">ประเภท (Type)</label>
+        <select
+          value={shipment_type}
+          onChange={(e) => setShipmentType(e.target.value)}
+          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="Outbound">Outbound</option>
+          <option value="Inbound">Inbound</option>
         </select>
       </div>
       <div>

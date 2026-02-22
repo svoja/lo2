@@ -9,7 +9,9 @@ exports.getAllShipments = (req, res) => {
             b2.branch_name AS destination_branch,
             t.plate_number AS truck_plate,
             s.status,
+            s.shipment_type,
             s.departure_time,
+            s.arrival_time,
             s.total_volume,
             (SELECT COALESCE(SUM(o.box_count), 0) FROM shipment_orders so JOIN orders o ON so.order_id = o.order_id WHERE so.shipment_id = s.shipment_id) AS cartons,
             t.capacity_m3 AS truck_capacity,
@@ -39,7 +41,9 @@ exports.getShipmentById = async (req, res) => {
             b2.branch_name AS destination_branch,
             t.plate_number AS truck_plate,
             s.status,
+            s.shipment_type,
             s.departure_time,
+            s.arrival_time,
             s.total_volume,
             (SELECT COALESCE(SUM(o.box_count), 0) FROM shipment_orders so JOIN orders o ON so.order_id = o.order_id WHERE so.shipment_id = s.shipment_id) AS cartons,
             t.capacity_m3 AS truck_capacity,
@@ -91,21 +95,45 @@ exports.getShipmentOrders = async (req, res) => {
     }
 };
 
-// CREATE shipment
-exports.createShipment = (req, res) => {
-    const { origin_branch_id, destination_branch_id, truck_id } = req.body;
+// CREATE shipment (ถ้าเลือก truck ไว้ จะ set truck เป็น busy เลย ไม่ต้อง assign อีกรอบ)
+exports.createShipment = async (req, res) => {
+    const { origin_branch_id, destination_branch_id, truck_id, shipment_type } = req.body;
+    const conn = db.promise();
 
-    const sql = `
-        INSERT INTO shipment 
-        (origin_branch_id, destination_branch_id, truck_id) 
-        VALUES (?, ?, ?)
-    `;
+    try {
+        const truckIdToUse = truck_id != null && truck_id !== '' ? Number(truck_id) : null;
+        const type = shipment_type === 'Inbound' ? 'Inbound' : 'Outbound';
 
-    db.query(sql, [origin_branch_id, destination_branch_id, truck_id], 
-    (err, result) => {
-        if (err) return res.status(500).json(err);
+        if (truckIdToUse != null) {
+            const [truck] = await conn.query(
+                `SELECT status FROM truck WHERE truck_id = ?`,
+                [truckIdToUse]
+            );
+            if (truck.length === 0) {
+                return res.status(400).json({ message: "Truck not found" });
+            }
+            if (truck[0].status !== 'available') {
+                return res.status(400).json({ message: "Truck not available" });
+            }
+        }
+
+        await conn.query(
+            `INSERT INTO shipment (origin_branch_id, destination_branch_id, truck_id, shipment_type)
+             VALUES (?, ?, ?, ?)`,
+            [origin_branch_id, destination_branch_id, truckIdToUse, type]
+        );
+
+        if (truckIdToUse != null) {
+            await conn.query(
+                `UPDATE truck SET status = 'busy' WHERE truck_id = ?`,
+                [truckIdToUse]
+            );
+        }
+
         res.json({ message: 'Shipment created' });
-    });
+    } catch (err) {
+        res.status(500).json(err);
+    }
 };
 
 // UPDATE shipment
@@ -255,6 +283,18 @@ exports.startShipment = async (req, res) => {
             });
         }
 
+        // 1b. ต้องมี order ถึงจะ Start ได้ (เช็คที่ขั้นแรก ไม่ใช่ตอน Complete)
+        const [orderCount] = await conn.query(
+            `SELECT COUNT(*) AS total FROM shipment_orders WHERE shipment_id = ?`,
+            [id]
+        );
+        if (orderCount[0].total === 0) {
+            await conn.rollback();
+            return res.status(400).json({
+                message: "Cannot start shipment without orders. Add at least one order first."
+            });
+        }
+
         // 2️⃣ Update status เป็น In Transit
         await conn.query(
             `UPDATE shipment
@@ -324,14 +364,11 @@ exports.completeShipment = async (req, res) => {
             });
         }
 
-        // 🔥 2️⃣ เช็คว่ามี order ใน shipment ไหม
+        // 2️⃣ (orders already required at Start, so we know there are orders here; keep check for safety)
         const [orders] = await conn.query(
-            `SELECT COUNT(*) AS total 
-             FROM shipment_orders 
-             WHERE shipment_id = ?`,
+            `SELECT COUNT(*) AS total FROM shipment_orders WHERE shipment_id = ?`,
             [id]
         );
-
         if (orders[0].total === 0) {
             await conn.rollback();
             return res.status(400).json({
