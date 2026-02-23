@@ -31,6 +31,9 @@ app.use('/api/orders', ordersRoutes);
 const shipmentRoutes = require('./routes/shipmentRoutes');
 app.use('/api/shipments', shipmentRoutes);
 
+const locationRoutes = require('./routes/locationRoutes');
+app.use('/api/locations', locationRoutes);
+
 const branchRoutes = require('./routes/branchRoutes');
 app.use('/api/branches', branchRoutes);
 
@@ -55,6 +58,7 @@ app.use('/api/planning', planningRoutes);
 console.log('Routes loaded:');
 console.log('- /api/orders');
 console.log('- /api/shipments');
+console.log('- /api/locations');
 console.log('- /api/branches');
 console.log('- /api/trucks');
 console.log('- /api/returns');

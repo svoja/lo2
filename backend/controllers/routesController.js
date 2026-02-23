@@ -12,7 +12,7 @@ exports.getRoutes = (req, res) => {
 // GET DCs by route id
 exports.getDCsByRoute = (req, res) => {
     const { id } = req.params;
-    const sql = `SELECT dc_id, dc_name, latitude, longitude, route_id FROM distribution WHERE route_id = ? ORDER BY dc_name`;
+    const sql = `SELECT d.dc_id, l.location_name AS dc_name, l.latitude, l.longitude, d.route_id FROM distribution d JOIN location l ON d.location_id = l.location_id WHERE d.route_id = ? ORDER BY d.dc_id`;
     db.query(sql, [id], (err, result) => {
         if (err) return res.status(500).json({ message: err.message, code: err.code });
         res.json(result);

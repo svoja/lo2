@@ -44,9 +44,10 @@ exports.getReturnById = async (req, res) => {
     if (order_id) {
       const [orderRows] = await db.promise().query(`
         SELECT o.order_id, o.order_date, o.status, o.total_amount, o.total_volume, o.box_count,
-               b.branch_name, o.shipment_id
+               l.location_name AS branch_name, o.shipment_id
         FROM orders o
         JOIN branch b ON o.branch_id = b.branch_id
+        JOIN location l ON b.location_id = l.location_id
         WHERE o.order_id = ?
       `, [order_id]);
       if (orderRows.length > 0) order = orderRows[0];

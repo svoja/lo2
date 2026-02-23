@@ -1,12 +1,15 @@
 const db = require('../config/db');
 
-// GET all shipments (with total_volume, cartons, truck_capacity, utilization_percent)
+// GET all shipments (with total_volume, cartons, truck_capacity, utilization_percent; origin/dest/truck_id for map)
 exports.getAllShipments = (req, res) => {
     const sql = `
         SELECT 
             s.shipment_id,
-            b1.branch_name AS origin_branch,
-            b2.branch_name AS destination_branch,
+            s.origin_branch_id,
+            s.destination_branch_id,
+            s.truck_id,
+            l1.location_name AS origin_branch,
+            l2.location_name AS destination_branch,
             t.plate_number AS truck_plate,
             s.status,
             s.shipment_type,
@@ -20,7 +23,9 @@ exports.getAllShipments = (req, res) => {
                  ELSE NULL END AS utilization_percent
         FROM shipment s
         JOIN branch b1 ON s.origin_branch_id = b1.branch_id
+        JOIN location l1 ON b1.location_id = l1.location_id
         JOIN branch b2 ON s.destination_branch_id = b2.branch_id
+        JOIN location l2 ON b2.location_id = l2.location_id
         LEFT JOIN truck t ON s.truck_id = t.truck_id
         ORDER BY s.departure_time DESC
     `;
@@ -37,8 +42,8 @@ exports.getShipmentById = async (req, res) => {
     const sql = `
         SELECT 
             s.shipment_id,
-            b1.branch_name AS origin_branch,
-            b2.branch_name AS destination_branch,
+            l1.location_name AS origin_branch,
+            l2.location_name AS destination_branch,
             t.plate_number AS truck_plate,
             s.status,
             s.shipment_type,
@@ -54,7 +59,9 @@ exports.getShipmentById = async (req, res) => {
                  ELSE NULL END AS utilization_percent
         FROM shipment s
         JOIN branch b1 ON s.origin_branch_id = b1.branch_id
+        JOIN location l1 ON b1.location_id = l1.location_id
         JOIN branch b2 ON s.destination_branch_id = b2.branch_id
+        JOIN location l2 ON b2.location_id = l2.location_id
         LEFT JOIN truck t ON s.truck_id = t.truck_id
         WHERE s.shipment_id = ?
     `;
@@ -110,6 +117,67 @@ exports.getShipmentOrders = async (req, res) => {
             ORDER BY o.order_date DESC, o.order_id DESC
         `, [id]);
         res.json(orders);
+    } catch (err) {
+        res.status(500).json({ message: err.message, code: err.code });
+    }
+};
+
+// GET shipment route stops (origin, destination, ordered branch stops) for map polyline
+exports.getShipmentRouteStops = async (req, res) => {
+    const id = req.params.id;
+    try {
+        const [shipRows] = await db.promise().query(
+            `SELECT s.shipment_id, s.origin_branch_id, s.destination_branch_id
+             FROM shipment s WHERE s.shipment_id = ?`,
+            [id]
+        );
+        if (shipRows.length === 0) {
+            return res.status(404).json({ message: 'Shipment not found' });
+        }
+        const { origin_branch_id, destination_branch_id } = shipRows[0];
+
+        const [originRows] = await db.promise().query(
+            `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
+             FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
+            [origin_branch_id]
+        );
+        const [destRows] = await db.promise().query(
+            `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
+             FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
+            [destination_branch_id]
+        );
+        const origin = originRows[0] ? {
+            branch_id: originRows[0].branch_id,
+            branch_name: originRows[0].branch_name,
+            latitude: originRows[0].latitude,
+            longitude: originRows[0].longitude,
+        } : null;
+        const destination = destRows[0] ? {
+            branch_id: destRows[0].branch_id,
+            branch_name: destRows[0].branch_name,
+            latitude: destRows[0].latitude,
+            longitude: destRows[0].longitude,
+        } : null;
+
+        const [stopRows] = await db.promise().query(
+            `SELECT o.branch_id, l.location_name AS branch_name, l.latitude, l.longitude, so.order_id
+             FROM shipment_orders so
+             JOIN orders o ON so.order_id = o.order_id
+             JOIN branch b ON o.branch_id = b.branch_id
+             JOIN location l ON b.location_id = l.location_id
+             WHERE so.shipment_id = ?
+             ORDER BY so.order_id`,
+            [id]
+        );
+        const stops = (stopRows || []).map((r, i) => ({
+            branch_id: r.branch_id,
+            branch_name: r.branch_name,
+            latitude: r.latitude,
+            longitude: r.longitude,
+            sequence: i + 1,
+        }));
+
+        res.json({ origin, destination, stops });
     } catch (err) {
         res.status(500).json({ message: err.message, code: err.code });
     }

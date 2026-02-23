@@ -8,9 +8,11 @@ import ReturnsTable from './pages/ReturnsTable';
 import ShipmentDetail from './pages/ShipmentDetail';
 import OrderDetail from './pages/OrderDetail';
 import ReturnDetail from './pages/ReturnDetail';
+import MapPage from './pages/MapPage';
 
 const nav = [
   { to: '/', label: 'Dashboard' },
+  { to: '/map', label: 'Map' },
   { to: '/orders', label: 'Orders' },
   { to: '/shipments', label: 'Shipments' },
   { to: '/trucks', label: 'Trucks' },
@@ -48,6 +50,7 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/map" element={<MapPage />} />
           <Route path="/orders" element={<OrdersTable />} />
           <Route path="/orders/:id" element={<OrderDetail />} />
           <Route path="/shipments" element={<ShipmentList />} />

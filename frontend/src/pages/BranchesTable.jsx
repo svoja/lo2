@@ -4,6 +4,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api/branches';
+import { getDCs } from '../api/dcs';
 
 const columns = (onEdit, onDelete) => [
   { key: 'branch_id', label: 'ID', sortable: true },
@@ -45,10 +46,11 @@ const columns = (onEdit, onDelete) => [
   },
 ];
 
-function BranchForm({ branch, onSubmit, onCancel, isSubmitting }) {
+function BranchForm({ branch, dcs = [], onSubmit, onCancel, isSubmitting }) {
   const [branch_name, setBranchName] = useState(branch?.branch_name ?? '');
   const [latitude, setLatitude] = useState(branch?.latitude != null ? String(branch.latitude) : '');
   const [longitude, setLongitude] = useState(branch?.longitude != null ? String(branch.longitude) : '');
+  const [dc_id, setDcId] = useState(branch?.dc_id != null ? String(branch.dc_id) : '');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -56,11 +58,25 @@ function BranchForm({ branch, onSubmit, onCancel, isSubmitting }) {
       branch_name: branch_name.trim(),
       latitude: latitude.trim() === '' ? null : Number(latitude),
       longitude: longitude.trim() === '' ? null : Number(longitude),
+      dc_id: dc_id === '' ? null : Number(dc_id),
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      <div>
+        <label className="block text-sm font-medium text-slate-700">Distribution center</label>
+        <select
+          value={dc_id}
+          onChange={(e) => setDcId(e.target.value)}
+          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">— None —</option>
+          {dcs.map((dc) => (
+            <option key={dc.dc_id} value={dc.dc_id}>{dc.dc_name}</option>
+          ))}
+        </select>
+      </div>
       <div>
         <label className="block text-sm font-medium text-slate-700">Name</label>
         <input
@@ -113,6 +129,11 @@ export default function BranchesTable() {
   const { data = [], isLoading, isError } = useQuery({
     queryKey: ['branches'],
     queryFn: getBranches,
+  });
+
+  const { data: dcs = [] } = useQuery({
+    queryKey: ['dcs'],
+    queryFn: getDCs,
   });
 
   const createMutation = useMutation({
@@ -207,6 +228,7 @@ export default function BranchesTable() {
       >
         <BranchForm
           branch={editing}
+          dcs={dcs}
           onSubmit={handleSubmit}
           onCancel={() => setModalOpen(false)}
           isSubmitting={createMutation.isPending || updateMutation.isPending}

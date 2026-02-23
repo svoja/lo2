@@ -12,6 +12,11 @@ export function getShipmentOrders(id) {
   return get(`/api/shipments/${id}/orders`);
 }
 
+/** Route stops (origin, destination, ordered branch stops) for map polyline */
+export function getShipmentRouteStops(id) {
+  return get(`/api/shipments/${id}/route-stops`);
+}
+
 export function createShipment(body) {
   return post('/api/shipments', body);
 }

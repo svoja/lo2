@@ -9,6 +9,7 @@ router.post('/create-with-orders', shipmentController.createWithOrders);
 router.get('/', shipmentController.getAllShipments);
 router.post('/', shipmentController.createShipment);
 router.get('/:id/orders', shipmentController.getShipmentOrders);
+router.get('/:id/route-stops', shipmentController.getShipmentRouteStops);
 router.get('/:id', shipmentController.getShipmentById);
 router.put('/:id', shipmentController.updateShipment);
 router.delete('/:id', shipmentController.deleteShipment);

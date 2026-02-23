@@ -6,12 +6,13 @@ exports.getAllOrders = (req, res) => {
         SELECT
             o.order_id,
             o.order_date,
-            b.branch_name,
+            l.location_name AS branch_name,
             s.shipment_id,
             o.status,
             o.total_amount
         FROM orders o
         JOIN branch b ON o.branch_id = b.branch_id
+        JOIN location l ON b.location_id = l.location_id
         LEFT JOIN shipment s ON o.shipment_id = s.shipment_id
         ORDER BY o.order_date DESC, o.order_id DESC
     `;
@@ -130,10 +131,11 @@ exports.getOrderById = async (req, res) => {
                 o.total_volume,
                 o.box_count,
                 b.branch_id,
-                b.branch_name,
+                l.location_name AS branch_name,
                 s.shipment_id
             FROM orders o
             JOIN branch b ON o.branch_id = b.branch_id
+            JOIN location l ON b.location_id = l.location_id
             LEFT JOIN shipment s ON o.shipment_id = s.shipment_id
             WHERE o.order_id = ?
         `, [id]);

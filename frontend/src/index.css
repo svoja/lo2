@@ -7,3 +7,9 @@
 body {
   @apply bg-slate-50 text-slate-800 antialiased;
 }
+
+/* Leaflet: custom markers (no default icon image) */
+.leaflet-marker-icon.custom-marker {
+  background: none !important;
+  border: none !important;
+}
