@@ -9,10 +9,19 @@ import { getBranches } from '../api/branches';
 import { getShipments } from '../api/shipments';
 import { getProducts } from '../api/products';
 
-const orderStatusOptions = ['Pending', 'In Transit', 'Delivered'];
+const orderStatusOptions = ['Pending', 'In Transit', 'Delivered', 'Received'];
 
 const columns = (onEdit, onDelete) => [
-  { key: 'order_id', label: 'ID', sortable: true },
+  {
+    key: 'order_id',
+    label: 'ID',
+    sortable: true,
+    render: (val, row) => (
+      <Link to={`/orders/${row.order_id}`} className="font-medium text-sky-600 hover:underline">
+        {val}
+      </Link>
+    ),
+  },
   { key: 'order_date', label: 'Date', sortable: true },
   { key: 'branch_name', label: 'Branch', sortable: true },
   {
@@ -41,6 +50,9 @@ const columns = (onEdit, onDelete) => [
     sortable: false,
     render: (_, row) => (
       <div className="flex gap-2">
+        <Link to={`/orders/${row.order_id}`} className="text-sky-600 hover:underline text-sm">
+          View
+        </Link>
         <button type="button" onClick={() => onEdit(row)} className="text-sky-600 hover:underline text-sm">
           Edit
         </button>

@@ -31,7 +31,7 @@ exports.getAllShipments = (req, res) => {
     });
 };
 
-// GET shipment by ID (with total_volume, cartons, truck_capacity, utilization_percent, orders)
+// GET shipment by ID (with total_volume, cartons, truck_capacity, utilization_percent, orders, receipt fields)
 exports.getShipmentById = async (req, res) => {
     const id = req.params.id;
     const sql = `
@@ -45,6 +45,8 @@ exports.getShipmentById = async (req, res) => {
             s.departure_time,
             s.arrival_time,
             s.total_volume,
+            s.receipt_notes,
+            s.receipt_damage,
             (SELECT COALESCE(SUM(o.box_count), 0) FROM shipment_orders so JOIN orders o ON so.order_id = o.order_id WHERE so.shipment_id = s.shipment_id) AS cartons,
             t.capacity_m3 AS truck_capacity,
             CASE WHEN t.truck_id IS NOT NULL AND t.capacity_m3 > 0
@@ -69,9 +71,27 @@ exports.getShipmentById = async (req, res) => {
             FROM shipment_orders so
             JOIN orders o ON so.order_id = o.order_id
             WHERE so.shipment_id = ?
-            ORDER BY o.order_date DESC
+            ORDER BY o.order_date DESC, o.order_id DESC
         `, [id]);
         shipment.orders = orders;
+
+        const [returns] = await db.promise().query(`
+            SELECT r.return_id, r.return_date, r.status, r.total_volume, r.order_id
+            FROM \`returns\` r
+            WHERE r.shipment_id = ?
+            ORDER BY r.return_date DESC, r.return_id DESC
+        `, [id]);
+        shipment.returns = returns;
+
+        const [availableReturns] = await db.promise().query(`
+            SELECT r.return_id, r.return_date, r.status, r.total_volume, r.order_id
+            FROM \`returns\` r
+            INNER JOIN shipment_orders so ON so.order_id = r.order_id AND so.shipment_id = ?
+            WHERE r.shipment_id IS NULL AND (r.status = 'Pending' OR r.status IS NULL OR TRIM(r.status) = '')
+            ORDER BY r.return_date DESC, r.return_id DESC
+        `, [id]);
+        shipment.available_returns = availableReturns;
+
         res.json(shipment);
     } catch (err) {
         res.status(500).json({ message: err.message, code: err.code });
@@ -87,7 +107,7 @@ exports.getShipmentOrders = async (req, res) => {
             FROM shipment_orders so
             JOIN orders o ON so.order_id = o.order_id
             WHERE so.shipment_id = ?
-            ORDER BY o.order_date DESC
+            ORDER BY o.order_date DESC, o.order_id DESC
         `, [id]);
         res.json(orders);
     } catch (err) {
@@ -325,9 +345,10 @@ exports.startShipment = async (req, res) => {
     }
 };
 
-// COMPLETE shipment
+// COMPLETE shipment (optional return_ids: attach returns and mark Received when delivery done)
 exports.completeShipment = async (req, res) => {
     const { id } = req.params;
+    const return_ids = Array.isArray(req.body?.return_ids) ? req.body.return_ids.map((x) => Number(x)).filter(Boolean) : [];
 
     const conn = db.promise();
 
@@ -336,7 +357,7 @@ exports.completeShipment = async (req, res) => {
 
         // 1️⃣ ตรวจ shipment
         const [shipment] = await conn.query(
-            `SELECT truck_id, status 
+            `SELECT truck_id, status, shipment_type 
              FROM shipment 
              WHERE shipment_id = ?`,
             [id]
@@ -349,6 +370,14 @@ exports.completeShipment = async (req, res) => {
 
         const truckId = shipment[0].truck_id;
         const currentStatus = shipment[0].status;
+        const shipmentType = (shipment[0].shipment_type || '').trim();
+
+        if (shipmentType === 'Inbound') {
+            await conn.rollback();
+            return res.status(400).json({
+                message: "Use Receive shipment for inbound. Complete is for outbound only."
+            });
+        }
 
         if (!truckId) {
             await conn.rollback();
@@ -374,6 +403,17 @@ exports.completeShipment = async (req, res) => {
             return res.status(400).json({
                 message: "Cannot complete shipment without orders"
             });
+        }
+
+        if (return_ids.length > 0) {
+            const placeholders = return_ids.map(() => '?').join(',');
+            await conn.query(
+                `UPDATE \`returns\` r
+                 INNER JOIN shipment_orders so ON so.order_id = r.order_id AND so.shipment_id = ?
+                 SET r.shipment_id = ?, r.status = 'Received'
+                 WHERE r.return_id IN (${placeholders}) AND r.shipment_id IS NULL`,
+                [id, id, ...return_ids]
+            );
         }
 
         // 3️⃣ Update shipment → Delivered
@@ -407,6 +447,106 @@ exports.completeShipment = async (req, res) => {
             message: "Shipment completed successfully"
         });
 
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json(err);
+    }
+};
+
+// RECEIVE shipment (inbound only: optional receipt_notes, receipt_damage, return_ids to attach)
+exports.receiveShipment = async (req, res) => {
+    const { id } = req.params;
+    const { receipt_notes, receipt_damage, return_ids: bodyReturnIds } = req.body || {};
+    const return_ids = Array.isArray(bodyReturnIds) ? bodyReturnIds.map((x) => Number(x)).filter(Boolean) : [];
+
+    const conn = db.promise();
+
+    try {
+        await conn.beginTransaction();
+
+        const [shipment] = await conn.query(
+            `SELECT truck_id, status, shipment_type FROM shipment WHERE shipment_id = ?`,
+            [id]
+        );
+
+        if (shipment.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: "Shipment not found" });
+        }
+
+        const truckId = shipment[0].truck_id;
+        const currentStatus = (shipment[0].status || '').trim();
+        const shipmentType = (shipment[0].shipment_type || '').trim();
+
+        if (shipmentType !== 'Inbound') {
+            await conn.rollback();
+            return res.status(400).json({
+                message: "Receive is for inbound shipments only. Use Complete for outbound."
+            });
+        }
+
+        if (currentStatus !== 'In Transit') {
+            await conn.rollback();
+            return res.status(400).json({
+                message: "Shipment must be In Transit to receive."
+            });
+        }
+
+        if (!truckId) {
+            await conn.rollback();
+            return res.status(400).json({ message: "No truck assigned" });
+        }
+
+        const [orderCount] = await conn.query(
+            `SELECT COUNT(*) AS total FROM shipment_orders WHERE shipment_id = ?`,
+            [id]
+        );
+        if (orderCount[0].total === 0) {
+            await conn.rollback();
+            return res.status(400).json({
+                message: "Cannot receive shipment without orders"
+            });
+        }
+
+        if (return_ids.length > 0) {
+            const placeholders = return_ids.map(() => '?').join(',');
+            await conn.query(
+                `UPDATE \`returns\` r
+                 INNER JOIN shipment_orders so ON so.order_id = r.order_id AND so.shipment_id = ?
+                 SET r.shipment_id = ?, r.status = 'Received'
+                 WHERE r.return_id IN (${placeholders}) AND r.shipment_id IS NULL`,
+                [id, id, ...return_ids]
+            );
+        }
+
+        await conn.query(
+            `UPDATE shipment
+             SET status = 'Received',
+                 arrival_time = NOW(),
+                 receipt_notes = ?,
+                 receipt_damage = ?
+             WHERE shipment_id = ?`,
+            [receipt_notes != null ? String(receipt_notes).trim() || null : null, receipt_damage != null ? String(receipt_damage).trim() || null : null, id]
+        );
+
+        await conn.query(
+            `UPDATE orders o
+             INNER JOIN shipment_orders so ON o.order_id = so.order_id AND so.shipment_id = ?
+             SET o.status = 'Received'`,
+            [id]
+        );
+
+        await conn.query(
+            `UPDATE truck SET status = 'available' WHERE truck_id = ?`,
+            [truckId]
+        );
+
+        await conn.commit();
+
+        res.json({
+            message: "Shipment received successfully",
+            status: "Received"
+        });
     } catch (err) {
         await conn.rollback();
         res.status(500).json(err);
@@ -510,6 +650,144 @@ exports.autoAssignTruck = async (req, res) => {
     } catch (err) {
         await conn.rollback();
         res.status(500).json(err);
+    }
+};
+
+const BOX_VOLUME = 0.036;
+
+// POST create shipment with orders (route + dc + branches with items; optional truck_id)
+exports.createWithOrders = async (req, res) => {
+    const { route_id, dc_id, branches, truck_id: bodyTruckId } = req.body;
+    const conn = db.promise();
+
+    if (!route_id || !dc_id || !Array.isArray(branches) || branches.length === 0) {
+        return res.status(400).json({ message: 'route_id, dc_id and non-empty branches required' });
+    }
+
+    let truckIdToUse = bodyTruckId != null && bodyTruckId !== '' ? Number(bodyTruckId) : null;
+    if (truckIdToUse != null) {
+        const [truck] = await conn.query(
+            `SELECT truck_id, status FROM truck WHERE truck_id = ?`,
+            [truckIdToUse]
+        );
+        if (truck.length === 0) {
+            return res.status(400).json({ message: 'Truck not found' });
+        }
+        if ((truck[0].status || '').toLowerCase() !== 'available') {
+            return res.status(400).json({ message: 'Truck is not available' });
+        }
+    }
+
+    try {
+        await conn.beginTransaction();
+
+        const branchIds = branches.map((b) => b.branch_id).filter(Boolean);
+        if (branchIds.length === 0) {
+            await conn.rollback();
+            return res.status(400).json({ message: 'At least one branch_id required' });
+        }
+
+        const origin_branch_id = branchIds[0];
+        const destination_branch_id = branchIds[branchIds.length - 1];
+
+        const [shipResult] = await conn.query(
+            `INSERT INTO shipment (origin_branch_id, destination_branch_id, truck_id, status, total_volume, shipment_type)
+             VALUES (?, ?, ?, 'pending', 0, 'Outbound')`,
+            [origin_branch_id, destination_branch_id, truckIdToUse]
+        );
+        const shipment_id = shipResult.insertId;
+        let shipmentTotalVolume = 0;
+
+        for (const branch of branches) {
+            const branch_id = branch.branch_id;
+            const items = branch.items || [];
+            if (items.length === 0) continue;
+
+            let totalAmount = 0;
+            let totalVolume = 0;
+
+            for (const item of items) {
+                const [productData] = await conn.query(
+                    `SELECT unit_price, length, width, height, volume FROM products WHERE product_id = ?`,
+                    [item.product_id]
+                );
+                if (productData.length === 0) {
+                    await conn.rollback();
+                    return res.status(400).json({ message: `Invalid product_id: ${item.product_id}` });
+                }
+                const p = productData[0];
+                const qty = Number(item.quantity) || 0;
+                totalAmount += Number(p.unit_price) * qty;
+                let volPerUnit;
+                if (p.volume != null && Number(p.volume) > 0) {
+                    volPerUnit = Number(p.volume);
+                } else if (p.length != null && p.width != null && p.height != null) {
+                    volPerUnit = (Number(p.length) / 100) * (Number(p.width) / 100) * (Number(p.height) / 100);
+                } else {
+                    volPerUnit = 0;
+                }
+                totalVolume += volPerUnit * qty;
+            }
+
+            const boxCount = Math.ceil(totalVolume / BOX_VOLUME);
+
+            const [orderResult] = await conn.query(
+                `INSERT INTO orders (branch_id, order_date, shipment_id, status, total_amount, total_volume, box_count)
+                 VALUES (?, CURDATE(), ?, 'Pending', ?, ?, ?)`,
+                [branch_id, shipment_id, totalAmount, totalVolume, boxCount]
+            );
+            const order_id = orderResult.insertId;
+
+            for (const item of items) {
+                await conn.query(
+                    `INSERT INTO order_details (order_id, product_id, quantity, production_date)
+                     VALUES (?, ?, ?, NOW())`,
+                    [order_id, item.product_id, item.quantity]
+                );
+            }
+
+            await conn.query(
+                `INSERT INTO shipment_orders (shipment_id, order_id) VALUES (?, ?)`,
+                [shipment_id, order_id]
+            );
+
+            shipmentTotalVolume += Number(totalVolume);
+        }
+
+        await conn.query(
+            `UPDATE shipment SET total_volume = ? WHERE shipment_id = ?`,
+            [Number(shipmentTotalVolume), shipment_id]
+        );
+
+        if (truckIdToUse != null) {
+            await conn.query(
+                `UPDATE truck SET status = 'busy' WHERE truck_id = ?`,
+                [truckIdToUse]
+            );
+            // Auto-start shipment: In Transit + departure_time, and orders In Transit
+            await conn.query(
+                `UPDATE shipment
+                 SET status = 'In Transit', departure_time = NOW()
+                 WHERE shipment_id = ?`,
+                [shipment_id]
+            );
+            await conn.query(
+                `UPDATE orders o
+                 INNER JOIN shipment_orders so ON o.order_id = so.order_id AND so.shipment_id = ?
+                 SET o.status = 'In Transit'`,
+                [shipment_id]
+            );
+        }
+
+        await conn.commit();
+
+        res.status(201).json({
+            message: truckIdToUse != null ? 'Shipment created with orders and started' : 'Shipment created with orders',
+            shipment_id
+        });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ message: err.message, code: err.code });
     }
 };
 

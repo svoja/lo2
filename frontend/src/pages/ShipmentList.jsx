@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getShipments, createShipment, startShipment, completeShipment } from '../api/shipments';
-import { getBranches } from '../api/branches';
-import { getTrucks } from '../api/trucks';
+import { getShipments, startShipment, completeShipment } from '../api/shipments';
 import StatusBadge from '../components/StatusBadge';
 import UtilizationBar from '../components/UtilizationBar';
-import Modal from '../components/Modal';
+import CreateShipmentPage from './CreateShipmentPage';
 
 function isDraft(status) {
   const s = (status || '').toLowerCase().replace(/\s+/g, '_');
@@ -20,27 +18,21 @@ function isCompleted(status) {
   const s = (status || '').toLowerCase();
   return s === 'delivered';
 }
+function isReceived(status) {
+  const s = (status || '').toLowerCase();
+  return s === 'received';
+}
+function isInbound(s) {
+  return (s?.shipment_type || '').trim() === 'Inbound';
+}
 
 export default function ShipmentList() {
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createError, setCreateError] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const { data: shipments = [], isLoading, isError, error } = useQuery({
     queryKey: ['shipments'],
     queryFn: getShipments,
-  });
-  const { data: branches = [] } = useQuery({ queryKey: ['branches'], queryFn: getBranches });
-  const { data: trucks = [] } = useQuery({ queryKey: ['trucks'], queryFn: getTrucks });
-
-  const createMutation = useMutation({
-    mutationFn: createShipment,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shipments'] });
-      setCreateOpen(false);
-      setCreateError(null);
-    },
-    onError: (err) => setCreateError(err.body?.message || err.message),
   });
 
   const startMutation = useMutation({
@@ -69,13 +61,28 @@ export default function ShipmentList() {
     );
   }
 
+  if (showCreate) {
+    return (
+      <div className="space-y-4">
+        <CreateShipmentPage
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['shipments'] });
+            queryClient.invalidateQueries({ queryKey: ['trucks'] });
+            setShowCreate(false);
+          }}
+          onCancel={() => setShowCreate(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-800">Shipment Management</h2>
         <button
           type="button"
-          onClick={() => { setCreateOpen(true); setCreateError(null); }}
+          onClick={() => setShowCreate(true)}
           className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
         >
           สร้าง Shipment
@@ -154,7 +161,7 @@ export default function ShipmentList() {
                           {startMutation.isPending ? 'Starting…' : 'Start Shipment'}
                         </button>
                       )}
-                      {isInTransit(s.status) && (
+                      {isInTransit(s.status) && !isInbound(s) && (
                         <button
                           type="button"
                           onClick={() => completeMutation.mutate(s.shipment_id)}
@@ -164,7 +171,7 @@ export default function ShipmentList() {
                           {completeMutation.isPending ? 'Completing…' : 'Complete Shipment'}
                         </button>
                       )}
-                      {isCompleted(s.status) && (
+                      {(isCompleted(s.status) || isReceived(s.status)) && (
                         <span className="text-xs text-slate-400">—</span>
                       )}
                     </div>
@@ -175,106 +182,6 @@ export default function ShipmentList() {
           </tbody>
         </table>
       </div>
-
-      <Modal
-        title="สร้าง Shipment"
-        open={createOpen}
-        onClose={() => { setCreateOpen(false); setCreateError(null); }}
-      >
-        <CreateShipmentForm
-          branches={branches}
-          trucks={trucks}
-          onSubmit={(body) => createMutation.mutate(body)}
-          onCancel={() => setCreateOpen(false)}
-          isSubmitting={createMutation.isPending}
-          error={createError}
-        />
-      </Modal>
     </div>
-  );
-}
-
-function CreateShipmentForm({ branches, trucks, onSubmit, onCancel, isSubmitting, error }) {
-  const [origin_branch_id, setOriginBranchId] = useState(branches[0]?.branch_id ?? '');
-  const [destination_branch_id, setDestinationBranchId] = useState(branches[0]?.branch_id ?? '');
-  const [truck_id, setTruckId] = useState('');
-  const [shipment_type, setShipmentType] = useState('Outbound');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onSubmit({
-      origin_branch_id: Number(origin_branch_id),
-      destination_branch_id: Number(destination_branch_id),
-      truck_id: truck_id === '' ? undefined : Number(truck_id),
-      shipment_type,
-    });
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      {error && (
-        <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-800">{error}</div>
-      )}
-      <div>
-        <label className="block text-sm font-medium text-slate-700">ต้นทาง (Origin branch)</label>
-        <select
-          value={origin_branch_id}
-          onChange={(e) => setOriginBranchId(e.target.value)}
-          required
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="">เลือกสาขา</option>
-          {branches.map((b) => (
-            <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-700">ปลายทาง (Destination branch)</label>
-        <select
-          value={destination_branch_id}
-          onChange={(e) => setDestinationBranchId(e.target.value)}
-          required
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="">เลือกสาขา</option>
-          {branches.map((b) => (
-            <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-700">ประเภท (Type)</label>
-        <select
-          value={shipment_type}
-          onChange={(e) => setShipmentType(e.target.value)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="Outbound">Outbound</option>
-          <option value="Inbound">Inbound</option>
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-700">รถบรรทุก (ไม่บังคับ)</label>
-        <select
-          value={truck_id}
-          onChange={(e) => setTruckId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="">ไม่ระบุ</option>
-          {trucks.map((t) => (
-            <option key={t.truck_id} value={t.truck_id}>{t.plate_number} ({t.capacity_m3} m³)</option>
-          ))}
-        </select>
-      </div>
-      <div className="flex justify-end gap-2 pt-2">
-        <button type="button" onClick={onCancel} className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
-          ยกเลิก
-        </button>
-        <button type="submit" disabled={isSubmitting} className="rounded-md bg-sky-600 px-3 py-2 text-sm text-white hover:bg-sky-500 disabled:opacity-50">
-          {isSubmitting ? 'กำลังสร้าง…' : 'สร้าง'}
-        </button>
-      </div>
-    </form>
   );
 }

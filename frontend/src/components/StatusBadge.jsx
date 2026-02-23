@@ -1,11 +1,12 @@
 /**
  * Maps backend status to display label and color.
- * Draft = pending | Preparing (gray), In Transit = blue, Completed = Delivered (green).
+ * Draft = pending | Preparing (gray), In Transit = blue, Delivered/Received = green.
  */
 function getStatusDisplay(status) {
   const s = (status || '').toLowerCase().replace(/\s+/g, '_');
   if (s === 'in_transit' || s === 'in transit') return { label: 'In Transit', className: 'bg-blue-100 text-blue-800' };
   if (s === 'delivered') return { label: 'Completed', className: 'bg-green-100 text-green-800' };
+  if (s === 'received') return { label: 'Received', className: 'bg-teal-100 text-teal-800' };
   return { label: 'Draft', className: 'bg-slate-200 text-slate-800' };
 }
 

@@ -32,8 +32,15 @@ export function startShipment(id) {
   return put(`/api/shipments/${id}/start`);
 }
 
-export function completeShipment(id) {
-  return put(`/api/shipments/${id}/complete`);
+export function completeShipment(id, body = {}) {
+  return put(`/api/shipments/${id}/complete`, body);
+}
+
+/**
+ * Receive inbound shipment (optional receipt_notes, receipt_damage).
+ */
+export function receiveShipment(id, body = {}) {
+  return put(`/api/shipments/${id}/receive`, body);
 }
 
 export function getShipmentCapacity(id) {
@@ -46,4 +53,12 @@ export function autoAssignTruck(id) {
 
 export function addOrdersToShipment(shipmentId, orderIds) {
   return post(`/api/shipments/${shipmentId}/orders`, { order_ids: orderIds });
+}
+
+/**
+ * Create shipment with orders in one request.
+ * Body: { route_id, dc_id, branches: [{ branch_id, items: [{ product_id, quantity }] }] }
+ */
+export function createWithOrders(body) {
+  return post('/api/shipments/create-with-orders', body);
 }

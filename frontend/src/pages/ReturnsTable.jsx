@@ -5,12 +5,22 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { getReturns, getReturnById, createReturn, updateReturn, deleteReturn } from '../api/returns';
+import { getOrders } from '../api/orders';
 import { getProducts } from '../api/products';
 
 const returnStatusOptions = ['Pending', 'Approved', 'Rejected'];
 
 const columns = (onEdit, onDelete) => [
-  { key: 'return_id', label: 'ID', sortable: true },
+  {
+    key: 'return_id',
+    label: 'ID',
+    sortable: true,
+    render: (val, row) => (
+      <Link to={`/returns/${row.return_id}`} className="font-medium text-sky-600 hover:underline">
+        {val}
+      </Link>
+    ),
+  },
   { key: 'return_date', label: 'Date', sortable: true },
   { key: 'status', label: 'Status', sortable: true },
   {
@@ -23,7 +33,14 @@ const columns = (onEdit, onDelete) => [
     key: 'order_id',
     label: 'Order',
     sortable: true,
-    render: (val) => (val != null ? String(val) : '—'),
+    render: (val) =>
+      val != null ? (
+        <Link to={`/orders/${val}`} className="text-sky-600 hover:underline">
+          {val}
+        </Link>
+      ) : (
+        '—'
+      ),
   },
   {
     key: 'shipment_id',
@@ -44,6 +61,9 @@ const columns = (onEdit, onDelete) => [
     sortable: false,
     render: (_, row) => (
       <div className="flex gap-2">
+        <Link to={`/returns/${row.return_id}`} className="text-sky-600 hover:underline text-sm">
+          View
+        </Link>
         <button type="button" onClick={() => onEdit(row)} className="text-sky-600 hover:underline text-sm">
           Edit
         </button>
@@ -185,14 +205,20 @@ function ReturnForm({ returnData, orders = [], products: productsList = [], onSu
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       <div>
-        <label className="block text-sm font-medium text-slate-700">Order ID</label>
-        <input
-          type="number"
+        <label className="block text-sm font-medium text-slate-700">Order</label>
+        <select
           value={order_id}
           onChange={(e) => setOrderId(e.target.value)}
           required
           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        />
+        >
+          <option value="">Select order</option>
+          {orders.map((o) => (
+            <option key={o.order_id} value={o.order_id}>
+              #{o.order_id} — {o.branch_name ?? '—'} — {o.order_date ? new Date(o.order_date).toLocaleDateString() : '—'}
+            </option>
+          ))}
+        </select>
       </div>
       <div>
         <label className="block text-sm font-medium text-slate-700">Shipment ID (optional)</label>
@@ -267,6 +293,7 @@ export default function ReturnsTable() {
     queryKey: ['returns'],
     queryFn: getReturns,
   });
+  const { data: orders = [] } = useQuery({ queryKey: ['orders'], queryFn: getOrders });
   const { data: products = [] } = useQuery({ queryKey: ['products'], queryFn: getProducts });
   const { data: returnDetail, isLoading: loadingDetail } = useQuery({
     queryKey: ['return', editing?.return_id],
@@ -373,6 +400,7 @@ export default function ReturnsTable() {
         ) : (
           <ReturnForm
             returnData={returnFormData}
+            orders={orders}
             products={products}
             onSubmit={handleSubmit}
             onCancel={() => setModalOpen(false)}

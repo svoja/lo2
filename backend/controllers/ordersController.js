@@ -13,7 +13,7 @@ exports.getAllOrders = (req, res) => {
         FROM orders o
         JOIN branch b ON o.branch_id = b.branch_id
         LEFT JOIN shipment s ON o.shipment_id = s.shipment_id
-        ORDER BY o.order_date DESC
+        ORDER BY o.order_date DESC, o.order_id DESC
     `;
 
     db.query(sql, (err, result) => {
@@ -127,6 +127,9 @@ exports.getOrderById = async (req, res) => {
                 o.order_date,
                 o.status,
                 o.total_amount,
+                o.total_volume,
+                o.box_count,
+                b.branch_id,
                 b.branch_name,
                 s.shipment_id
             FROM orders o
@@ -212,7 +215,7 @@ exports.updateOrder = async (req, res) => {
         }
 
         // Validate status value
-        const validStatus = ['Pending', 'In Transit', 'Delivered'];
+        const validStatus = ['Pending', 'In Transit', 'Delivered', 'Received'];
         if (status && !validStatus.includes(status)) {
             return res.status(400).json({ message: 'Invalid status value' });
         }

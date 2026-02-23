@@ -43,6 +43,15 @@ app.use('/api/returns', returnsRoutes);
 const productsRoutes = require('./routes/productsRoutes');
 app.use('/api/products', productsRoutes);
 
+const routesRoutes = require('./routes/routesRoutes');
+app.use('/api/routes', routesRoutes);
+
+const dcsRoutes = require('./routes/dcsRoutes');
+app.use('/api/dcs', dcsRoutes);
+
+const planningRoutes = require('./routes/planningRoutes');
+app.use('/api/planning', planningRoutes);
+
 console.log('Routes loaded:');
 console.log('- /api/orders');
 console.log('- /api/shipments');
@@ -50,6 +59,9 @@ console.log('- /api/branches');
 console.log('- /api/trucks');
 console.log('- /api/returns');
 console.log('- /api/products');
+console.log('- /api/routes');
+console.log('- /api/dcs');
+console.log('- /api/planning');
 
 app.listen(3000, () => {
     console.log('Server running on port 3000');

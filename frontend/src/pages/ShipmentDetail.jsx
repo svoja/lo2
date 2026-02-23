@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getShipmentById,
   assignTruck,
   startShipment,
   completeShipment,
+  receiveShipment,
   autoAssignTruck,
   addOrdersToShipment,
 } from '../api/shipments';
@@ -27,6 +28,13 @@ function isCompleted(status) {
   const s = (status || '').toLowerCase();
   return s === 'delivered';
 }
+function isReceived(status) {
+  const s = (status || '').toLowerCase();
+  return s === 'received';
+}
+function isInbound(shipment) {
+  return (shipment?.shipment_type || '').trim() === 'Inbound';
+}
 
 export default function ShipmentDetail() {
   const { id } = useParams();
@@ -35,7 +43,11 @@ export default function ShipmentDetail() {
   const [selectedTruckId, setSelectedTruckId] = useState('');
   const [actionError, setActionError] = useState(null);
   const [addOrderOpen, setAddOrderOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [receiveNotes, setReceiveNotes] = useState('');
+  const [receiveDamage, setReceiveDamage] = useState('');
   const [selectedOrderIds, setSelectedOrderIds] = useState([]);
+  const [selectedReturnIds, setSelectedReturnIds] = useState([]);
 
   const { data: shipment, isLoading, isError, error } = useQuery({
     queryKey: ['shipment', id],
@@ -58,6 +70,7 @@ export default function ShipmentDetail() {
     queryClient.invalidateQueries({ queryKey: ['shipments'] });
     queryClient.invalidateQueries({ queryKey: ['trucks'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
+    queryClient.invalidateQueries({ queryKey: ['returns'] });
   };
 
   const assignMutation = useMutation({
@@ -73,8 +86,23 @@ export default function ShipmentDetail() {
   });
 
   const completeMutation = useMutation({
-    mutationFn: () => completeShipment(id),
-    onSuccess: invalidate,
+    mutationFn: (body) => completeShipment(id, body || {}),
+    onSuccess: () => {
+      invalidate();
+      setSelectedReturnIds([]);
+    },
+    onError: (err) => setActionError(err.body?.message || err.message),
+  });
+
+  const receiveMutation = useMutation({
+    mutationFn: (body) => receiveShipment(id, body),
+    onSuccess: () => {
+      invalidate();
+      setReceiveOpen(false);
+      setReceiveNotes('');
+      setReceiveDamage('');
+      setSelectedReturnIds([]);
+    },
     onError: (err) => setActionError(err.body?.message || err.message),
   });
 
@@ -259,17 +287,158 @@ export default function ShipmentDetail() {
             {startMutation.isPending ? 'Starting…' : 'Start Shipment'}
           </button>
         )}
-        {isInTransit(shipment.status) && (
+        {isInTransit(shipment.status) && isInbound(shipment) && (
+          <button
+            type="button"
+            onClick={() => setReceiveOpen(true)}
+            className="rounded-md bg-teal-600 px-3 py-2 text-sm font-medium text-white hover:bg-teal-500 disabled:opacity-50"
+          >
+            Receive Shipment
+          </button>
+        )}
+        {isInTransit(shipment.status) && !isInbound(shipment) && (
           <button
             type="button"
             disabled={completeMutation.isPending}
-            onClick={() => completeMutation.mutate()}
+            onClick={() => completeMutation.mutate({ return_ids: selectedReturnIds })}
             className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
           >
             {completeMutation.isPending ? 'Completing…' : 'Complete Shipment'}
           </button>
         )}
       </div>
+
+      {isReceived(shipment.status) && (shipment.receipt_notes || shipment.receipt_damage) && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Receipt details</h3>
+          {shipment.receipt_notes && (
+            <p className="text-sm text-slate-700"><span className="font-medium text-slate-600">Notes:</span> {shipment.receipt_notes}</p>
+          )}
+          {shipment.receipt_damage && (
+            <p className="mt-1 text-sm text-slate-700"><span className="font-medium text-slate-600">Damage:</span> {shipment.receipt_damage}</p>
+          )}
+        </div>
+      )}
+
+      {/* Returns to bring back (tick to include when completing shipment) */}
+      {isInTransit(shipment.status) && (shipment.available_returns || []).length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <h3 className="border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold text-slate-800">
+            Returns to bring back (ติ๊กถ้าจะเอากลับมาพร้อม shipment นี้)
+          </h3>
+          <p className="px-4 pt-2 text-sm text-slate-600">
+            เลือก Return ที่จะนำกลับมา เมื่อ Complete / Receive shipment จะถือว่า Delivery → Receive เรียบร้อย
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="w-10 px-4 py-2"></th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Return ID</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Order</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Date</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Status</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-700">Volume</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {(shipment.available_returns || []).map((r) => (
+                  <tr key={r.return_id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedReturnIds.includes(r.return_id)}
+                        onChange={() => {
+                          setSelectedReturnIds((prev) =>
+                            prev.includes(r.return_id)
+                              ? prev.filter((x) => x !== r.return_id)
+                              : [...prev, r.return_id]
+                          );
+                        }}
+                        className="rounded border-slate-300"
+                      />
+                    </td>
+                    <td className="px-4 py-2 font-medium text-slate-800">
+                      <Link to={`/returns/${r.return_id}`} className="text-sky-600 hover:underline">
+                        {r.return_id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">
+                      {r.order_id != null ? (
+                        <Link to={`/orders/${r.order_id}`} className="text-sky-600 hover:underline">
+                          #{r.order_id}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-slate-700">
+                      {r.return_date ? new Date(r.return_date).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-slate-700">
+                      {r.total_volume != null ? Number(r.total_volume).toLocaleString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Returns for this shipment */}
+      {((shipment.returns) || []).length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <h3 className="border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold text-slate-800">
+            Returns for this shipment
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Return ID</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Date</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Status</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Order</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Volume</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {(shipment.returns || []).map((r) => (
+                  <tr key={r.return_id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2 font-medium text-slate-800">
+                      <Link to={`/returns/${r.return_id}`} className="text-sky-600 hover:underline">
+                        {r.return_id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2 text-slate-700">
+                      {r.return_date ? new Date(r.return_date).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td className="px-4 py-2">
+                      {r.order_id != null ? (
+                        <Link to={`/orders/${r.order_id}`} className="text-sky-600 hover:underline">
+                          #{r.order_id}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-4 py-2 tabular-nums text-slate-700">
+                      {r.total_volume != null ? Number(r.total_volume).toLocaleString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Orders in shipment */}
       <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -393,6 +562,61 @@ export default function ShipmentDetail() {
               </div>
             </>
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        title="Receive shipment"
+        open={receiveOpen}
+        onClose={() => {
+          setReceiveOpen(false);
+          setReceiveNotes('');
+          setReceiveDamage('');
+        }}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">Confirm receipt for this inbound shipment. Optionally add notes or damage details.</p>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Receipt notes (optional)</label>
+            <textarea
+              value={receiveNotes}
+              onChange={(e) => setReceiveNotes(e.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder="e.g. All items received, packaging intact"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Damage (optional)</label>
+            <input
+              type="text"
+              value={receiveDamage}
+              onChange={(e) => setReceiveDamage(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder="e.g. Box 3 dented, 2 units damaged"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => { setReceiveOpen(false); setReceiveNotes(''); setReceiveDamage(''); }}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={receiveMutation.isPending}
+              onClick={() => receiveMutation.mutate({
+                receipt_notes: receiveNotes.trim() || undefined,
+                receipt_damage: receiveDamage.trim() || undefined,
+                return_ids: selectedReturnIds,
+              })}
+              className="rounded-md bg-teal-600 px-3 py-2 text-sm font-medium text-white hover:bg-teal-500 disabled:opacity-50"
+            >
+              {receiveMutation.isPending ? 'Receiving…' : 'Confirm receive'}
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

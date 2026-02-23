@@ -15,7 +15,7 @@ exports.getAllReturns = async (req, res) => {
   }
 };
 
-// GET return by ID
+// GET return by ID (with linked order information)
 exports.getReturnById = async (req, res) => {
   const { id } = req.params;
 
@@ -27,6 +27,9 @@ exports.getReturnById = async (req, res) => {
     if (head.length === 0)
       return res.status(404).json({ message: 'Return not found' });
 
+    const ret = head[0];
+    const order_id = ret.order_id;
+
     const [items] = await db.promise().query(`
       SELECT rd.return_detail_id, rd.product_id, rd.quantity, rd.reason,
              p.product_name, p.volume
@@ -35,7 +38,29 @@ exports.getReturnById = async (req, res) => {
       WHERE rd.return_id = ?
     `, [id]);
 
-    res.json({ return: head[0], items });
+    let order = null;
+    let orderItems = [];
+
+    if (order_id) {
+      const [orderRows] = await db.promise().query(`
+        SELECT o.order_id, o.order_date, o.status, o.total_amount, o.total_volume, o.box_count,
+               b.branch_name, o.shipment_id
+        FROM orders o
+        JOIN branch b ON o.branch_id = b.branch_id
+        WHERE o.order_id = ?
+      `, [order_id]);
+      if (orderRows.length > 0) order = orderRows[0];
+
+      const [detailRows] = await db.promise().query(`
+        SELECT od.detail_id, p.product_name, od.quantity, od.production_date
+        FROM order_details od
+        JOIN products p ON od.product_id = p.product_id
+        WHERE od.order_id = ?
+      `, [order_id]);
+      orderItems = detailRows;
+    }
+
+    res.json({ return: ret, items, order, orderItems });
 
   } catch (err) {
     res.status(500).json(err);

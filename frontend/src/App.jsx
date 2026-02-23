@@ -6,6 +6,8 @@ import TrucksTable from './pages/TrucksTable';
 import BranchesTable from './pages/BranchesTable';
 import ReturnsTable from './pages/ReturnsTable';
 import ShipmentDetail from './pages/ShipmentDetail';
+import OrderDetail from './pages/OrderDetail';
+import ReturnDetail from './pages/ReturnDetail';
 
 const nav = [
   { to: '/', label: 'Dashboard' },
@@ -47,11 +49,13 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/orders" element={<OrdersTable />} />
+          <Route path="/orders/:id" element={<OrderDetail />} />
           <Route path="/shipments" element={<ShipmentList />} />
           <Route path="/shipments/:id" element={<ShipmentDetail />} />
           <Route path="/trucks" element={<TrucksTable />} />
           <Route path="/branches" element={<BranchesTable />} />
           <Route path="/returns" element={<ReturnsTable />} />
+          <Route path="/returns/:id" element={<ReturnDetail />} />
         </Routes>
       </main>
     </div>
