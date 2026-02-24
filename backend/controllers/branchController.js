@@ -1,9 +1,15 @@
 const db = require('../config/db');
 
-// GET all branches (name and coords from location via JOIN)
+// GET all branches (name and coords from location via JOIN; dc_name from DC's location)
 exports.getAllBranches = (req, res) => {
     db.query(
-        'SELECT b.branch_id, b.location_id, l.location_name AS branch_name, l.latitude, l.longitude, b.dc_id FROM branch b JOIN location l ON b.location_id = l.location_id ORDER BY l.location_name',
+        `SELECT b.branch_id, b.location_id, l.location_name AS branch_name, l.latitude, l.longitude, b.dc_id,
+                l_dc.location_name AS dc_name
+         FROM branch b
+         JOIN location l ON b.location_id = l.location_id
+         LEFT JOIN distribution d ON b.dc_id = d.dc_id
+         LEFT JOIN location l_dc ON d.location_id = l_dc.location_id
+         ORDER BY l.location_name`,
         (err, result) => {
             if (err) return res.status(500).json(err);
             res.json(result);
@@ -14,7 +20,13 @@ exports.getAllBranches = (req, res) => {
 // GET branch by ID
 exports.getBranchById = (req, res) => {
     db.query(
-        'SELECT b.branch_id, b.location_id, l.location_name AS branch_name, l.latitude, l.longitude, b.dc_id FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?',
+        `SELECT b.branch_id, b.location_id, l.location_name AS branch_name, l.latitude, l.longitude, b.dc_id,
+                l_dc.location_name AS dc_name
+         FROM branch b
+         JOIN location l ON b.location_id = l.location_id
+         LEFT JOIN distribution d ON b.dc_id = d.dc_id
+         LEFT JOIN location l_dc ON d.location_id = l_dc.location_id
+         WHERE b.branch_id = ?`,
         [req.params.id],
         (err, result) => {
             if (err) return res.status(500).json(err);
@@ -99,10 +111,29 @@ exports.updateBranch = (req, res) => {
     });
 };
 
-// DELETE branch
+// DELETE branch — forbidden if used in orders or shipment (FK RESTRICT)
 exports.deleteBranch = (req, res) => {
-    db.query('DELETE FROM branch WHERE branch_id=?', [req.params.id], (err) => {
-        if (err) return res.status(500).json(err);
-        res.json({ message: 'Branch deleted' });
-    });
+    const id = req.params.id;
+    db.query(
+        `SELECT (SELECT COUNT(*) FROM orders WHERE branch_id = ?) AS in_orders,
+                (SELECT COUNT(*) FROM shipment WHERE origin_branch_id = ? OR destination_branch_id = ?) AS in_shipments`,
+        [id, id, id],
+        (err, rows) => {
+            if (err) return res.status(500).json(err);
+            const inOrders = (rows[0] && Number(rows[0].in_orders)) || 0;
+            const inShipments = (rows[0] && Number(rows[0].in_shipments)) || 0;
+            if (inOrders > 0 || inShipments > 0) {
+                const parts = [];
+                if (inOrders > 0) parts.push('orders');
+                if (inShipments > 0) parts.push('shipments');
+                return res.status(409).json({
+                    message: `Cannot delete: this branch is used in ${parts.join(' and ')}. Remove or change those first.`,
+                });
+            }
+            db.query('DELETE FROM branch WHERE branch_id = ?', [id], (err2) => {
+                if (err2) return res.status(500).json(err2);
+                res.json({ message: 'Branch deleted' });
+            });
+        }
+    );
 };

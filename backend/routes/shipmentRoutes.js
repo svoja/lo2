@@ -4,6 +4,7 @@ const shipmentController = require('../controllers/shipmentController');
 
 // Create shipment with orders (must be before /:id routes)
 router.post('/create-with-orders', shipmentController.createWithOrders);
+router.post('/linehaul', shipmentController.createLinehaul);
 
 // Main CRUD operations
 router.get('/', shipmentController.getAllShipments);

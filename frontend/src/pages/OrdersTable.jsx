@@ -24,6 +24,7 @@ const columns = (onEdit, onDelete) => [
   },
   { key: 'order_date', label: 'Date', sortable: true },
   { key: 'branch_name', label: 'Branch', sortable: true },
+  { key: 'dc_name', label: 'DC', sortable: true, render: (v) => v || '—' },
   {
     key: 'shipment_id',
     label: 'Shipment',
@@ -239,8 +240,12 @@ export default function OrdersTable() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       setDeleteTarget(null);
+      setError(null);
     },
-    onError: (err) => setError(err.body?.message || err.message),
+    onError: (err) => {
+      setError(err.body?.message || err.message);
+      setDeleteTarget(null);
+    },
   });
 
   const handleSubmit = (values) => {

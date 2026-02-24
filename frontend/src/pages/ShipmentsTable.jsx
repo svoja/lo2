@@ -8,7 +8,7 @@ import { getShipments, createShipment, updateShipment, deleteShipment } from '..
 import { getBranches } from '../api/branches';
 import { getTrucks } from '../api/trucks';
 
-const statusOptions = ['pending', 'in_transit', 'completed'];
+const statusOptions = ['Preparing', 'In Transit', 'Delivered', 'Received'];
 
 const columns = (onEdit, onDelete) => [
   {
@@ -21,11 +21,18 @@ const columns = (onEdit, onDelete) => [
       </Link>
     ),
   },
-  { key: 'origin_branch', label: 'Origin', sortable: true },
+  {
+    key: 'origin_branch',
+    label: 'Origin',
+    sortable: true,
+    render: (v, row) => (v != null ? (row.origin_is_dc ? `DC: ${v}` : v) : '—'),
+  },
   { key: 'destination_branch', label: 'Destination', sortable: true },
-  { key: 'truck_plate', label: 'Truck', sortable: true },
+  { key: 'shipment_type', label: 'Type', sortable: true, render: (v) => v || '—' },
+  { key: 'truck_plate', label: 'Truck', sortable: true, render: (v) => v || '—' },
   { key: 'status', label: 'Status', sortable: true },
-  { key: 'departure_time', label: 'Departure', sortable: true },
+  { key: 'departure_time', label: 'Departure', sortable: true, render: (v) => v || '—' },
+  { key: 'arrival_time', label: 'Arrival', sortable: true, render: (v) => v || '—' },
   {
     key: '_actions',
     label: 'Actions',
@@ -44,10 +51,12 @@ const columns = (onEdit, onDelete) => [
 ];
 
 function ShipmentForm({ shipment, branches = [], trucks = [], onSubmit, onCancel, isSubmitting }) {
+  const editing = !!shipment?.shipment_id;
   const [origin_branch_id, setOriginBranchId] = useState(shipment?.origin_branch_id ?? branches[0]?.branch_id ?? '');
   const [destination_branch_id, setDestinationBranchId] = useState(shipment?.destination_branch_id ?? branches[0]?.branch_id ?? '');
   const [truck_id, setTruckId] = useState(shipment?.truck_id ?? '');
-  const [status, setStatus] = useState((shipment?.status ?? 'pending').toLowerCase().replace(/\s+/g, '_'));
+  const [shipment_type, setShipmentType] = useState(shipment?.shipment_type ?? 'Outbound');
+  const [status, setStatus] = useState(shipment?.status ?? 'Preparing');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -58,15 +67,25 @@ function ShipmentForm({ shipment, branches = [], trucks = [], onSubmit, onCancel
         origin_branch_id: Number(origin_branch_id),
         destination_branch_id: Number(destination_branch_id),
         truck_id: truck_id === '' ? undefined : Number(truck_id),
+        shipment_type: shipment_type === 'Inbound' ? 'Inbound' : 'Outbound',
       });
     }
   };
 
-  const editing = !!shipment?.shipment_id;
-
   if (editing) {
+    const isDraft = status === 'Preparing' || (status || '').toLowerCase() === 'pending';
+    const handleEditSubmit = (e) => {
+      e.preventDefault();
+      const body = { status };
+      if (isDraft) {
+        body.origin_branch_id = origin_branch_id ? Number(origin_branch_id) : undefined;
+        body.destination_branch_id = destination_branch_id ? Number(destination_branch_id) : undefined;
+        body.truck_id = truck_id === '' ? null : Number(truck_id);
+      }
+      onSubmit(body);
+    };
     return (
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form onSubmit={handleEditSubmit} className="space-y-3">
         <div>
           <label className="block text-sm font-medium text-slate-700">Status</label>
           <select
@@ -79,6 +98,47 @@ function ShipmentForm({ shipment, branches = [], trucks = [], onSubmit, onCancel
             ))}
           </select>
         </div>
+        {isDraft && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Origin branch</label>
+              <select
+                value={origin_branch_id}
+                onChange={(e) => setOriginBranchId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                {branches.map((b) => (
+                  <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Destination branch</label>
+              <select
+                value={destination_branch_id}
+                onChange={(e) => setDestinationBranchId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                {branches.map((b) => (
+                  <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Truck</label>
+              <select
+                value={truck_id}
+                onChange={(e) => setTruckId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">None</option>
+                {trucks.map((t) => (
+                  <option key={t.truck_id} value={t.truck_id}>{t.plate_number} ({t.capacity_m3} m³)</option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onCancel} className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
             Cancel
@@ -93,6 +153,17 @@ function ShipmentForm({ shipment, branches = [], trucks = [], onSubmit, onCancel
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      <div>
+        <label className="block text-sm font-medium text-slate-700">Type</label>
+        <select
+          value={shipment_type}
+          onChange={(e) => setShipmentType(e.target.value)}
+          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="Outbound">Outbound</option>
+          <option value="Inbound">Inbound</option>
+        </select>
+      </div>
       <div>
         <label className="block text-sm font-medium text-slate-700">Origin branch</label>
         <select
@@ -187,8 +258,12 @@ export default function ShipmentsTable() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipments'] });
       setDeleteTarget(null);
+      setError(null);
     },
-    onError: (err) => setError(err.body?.message || err.message),
+    onError: (err) => {
+      setError(err.body?.message || err.message);
+      setDeleteTarget(null);
+    },
   });
 
   const handleSubmit = (values) => {

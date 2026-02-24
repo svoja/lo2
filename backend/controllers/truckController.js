@@ -23,13 +23,14 @@ exports.getTruckById = (req, res) => {
     );
 };
 
-// CREATE truck
+// CREATE truck (truck_type: 'Linehaul' | 'LastMile', default LastMile)
 exports.createTruck = (req, res) => {
-    const { plate_number, capacity_m3, status } = req.body;
+    const { plate_number, capacity_m3, status, truck_type } = req.body;
+    const type = truck_type === 'Linehaul' ? 'Linehaul' : 'LastMile';
 
     db.query(
-        'INSERT INTO truck (plate_number, capacity_m3, status) VALUES (?, ?, ?)',
-        [plate_number, capacity_m3, status],
+        'INSERT INTO truck (plate_number, capacity_m3, status, truck_type) VALUES (?, ?, ?, ?)',
+        [plate_number, capacity_m3, status || 'available', type],
         (err) => {
             if (err) return res.status(500).json(err);
             res.json({ message: 'Truck created' });
@@ -39,11 +40,19 @@ exports.createTruck = (req, res) => {
 
 // UPDATE truck
 exports.updateTruck = (req, res) => {
-    const { plate_number, capacity_m3, status } = req.body;
+    const { plate_number, capacity_m3, status, truck_type } = req.body;
+    const type = truck_type !== undefined ? (truck_type === 'Linehaul' ? 'Linehaul' : 'LastMile') : undefined;
 
+    const updates = ['plate_number=?, capacity_m3=?, status=?'];
+    const values = [plate_number, capacity_m3, status || 'available'];
+    if (type !== undefined) {
+        updates.push('truck_type=?');
+        values.push(type);
+    }
+    values.push(req.params.id);
     db.query(
-        'UPDATE truck SET plate_number=?, capacity_m3=?, status=? WHERE truck_id=?',
-        [plate_number, capacity_m3, status, req.params.id],
+        `UPDATE truck SET ${updates.join(', ')} WHERE truck_id=?`,
+        values,
         (err) => {
             if (err) return res.status(500).json(err);
             res.json({ message: 'Truck updated' });

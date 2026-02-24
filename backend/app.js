@@ -52,6 +52,9 @@ app.use('/api/routes', routesRoutes);
 const dcsRoutes = require('./routes/dcsRoutes');
 app.use('/api/dcs', dcsRoutes);
 
+const manufacturerRoutes = require('./routes/manufacturerRoutes');
+app.use('/api/manufacturers', manufacturerRoutes);
+
 const planningRoutes = require('./routes/planningRoutes');
 app.use('/api/planning', planningRoutes);
 
@@ -65,6 +68,7 @@ console.log('- /api/returns');
 console.log('- /api/products');
 console.log('- /api/routes');
 console.log('- /api/dcs');
+console.log('- /api/manufacturers');
 console.log('- /api/planning');
 
 app.listen(3000, () => {

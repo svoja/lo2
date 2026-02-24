@@ -67,3 +67,11 @@ export function addOrdersToShipment(shipmentId, orderIds) {
 export function createWithOrders(body) {
   return post('/api/shipments/create-with-orders', body);
 }
+
+/**
+ * Create Linehaul shipment (Manufacturer → DC).
+ * Body: { manufacturer_id, dc_id, truck_id?, total_volume? }
+ */
+export function createLinehaul(body) {
+  return post('/api/shipments/linehaul', body);
+}

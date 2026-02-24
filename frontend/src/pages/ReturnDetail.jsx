@@ -145,6 +145,10 @@ export default function ReturnDetail() {
                 <dd className="mt-1 text-slate-800">{order.branch_name ?? '—'}</dd>
               </div>
               <div>
+                <dt className="text-sm font-medium text-slate-500">DC</dt>
+                <dd className="mt-1 text-slate-800">{order.dc_name ?? '—'}</dd>
+              </div>
+              <div>
                 <dt className="text-sm font-medium text-slate-500">Total amount</dt>
                 <dd className="mt-1 font-medium text-slate-800">
                   {order.total_amount != null ? Number(order.total_amount).toLocaleString() : '—'}

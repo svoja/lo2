@@ -4,13 +4,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { getBranches, createBranch, updateBranch, deleteBranch } from '../api/branches';
-import { getDCs } from '../api/dcs';
+import { getDCs, createDC, updateDC, deleteDC } from '../api/dcs';
 import { getLocations } from '../api/locations';
+import { getRoutes } from '../api/routes';
 
 const columns = (onEdit, onDelete) => [
-  { key: 'branch_id', label: 'ID', sortable: true },
-  { key: 'branch_name', label: 'Name', sortable: true },
+  { key: 'dc_id', label: 'ID', sortable: true },
+  { key: 'dc_name', label: 'Name', sortable: true },
   {
     key: 'location_id',
     label: 'Location',
@@ -22,8 +22,8 @@ const columns = (onEdit, onDelete) => [
     ),
   },
   {
-    key: 'dc_name',
-    label: 'DC',
+    key: 'route_name',
+    label: 'Route',
     sortable: true,
     render: (v) => v || '—',
   },
@@ -64,23 +64,23 @@ const columns = (onEdit, onDelete) => [
   },
 ];
 
-// Branch = เลือก Location (ชื่อ/พิกัดอยู่ที่ Location) + DC. สร้าง Branch = ผูก Location กับ DC.
-function BranchForm({ branch, locations = [], branches = [], dcs = [], onSubmit, onCancel, isSubmitting }) {
-  const isEdit = !!branch?.branch_id;
-  const usedLocationIds = branches.map((b) => b.location_id);
-  const availableLocations = locations.filter((loc) => !usedLocationIds.includes(loc.location_id));
+// DC = Location + Route. ชื่อ/พิกัดอยู่ที่ Location.
+function DCForm({ dc, locations = [], dcs = [], routes = [], onSubmit, onCancel, isSubmitting }) {
+  const isEdit = !!dc?.dc_id;
+  const usedLocationIds = (dcs || []).map((d) => d.location_id);
+  const availableLocations = (locations || []).filter((loc) => !usedLocationIds.includes(loc.location_id));
 
-  const [location_id, setLocationId] = useState(branch?.location_id ?? '');
-  const [dc_id, setDcId] = useState(branch?.dc_id != null ? String(branch.dc_id) : '');
+  const [location_id, setLocationId] = useState(dc?.location_id ?? '');
+  const [route_id, setRouteId] = useState(dc?.route_id != null ? String(dc.route_id) : '');
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (isEdit) {
-      onSubmit({ dc_id: dc_id === '' ? null : Number(dc_id) });
+      onSubmit({ route_id: route_id === '' ? null : Number(route_id) });
     } else {
       onSubmit({
         location_id: Number(location_id),
-        dc_id: dc_id === '' ? null : Number(dc_id),
+        route_id: route_id === '' ? null : Number(route_id),
       });
     }
   };
@@ -90,7 +90,7 @@ function BranchForm({ branch, locations = [], branches = [], dcs = [], onSubmit,
       {!isEdit && (
         <>
           <p className="text-sm text-slate-600">
-            Branch คือการผูก <strong>Location</strong> (ชื่อและพิกัดอยู่ที่ Location) กับ DC. สร้าง Location จากเมนู Locations ก่อน แล้วมาเลือกที่นี่.
+            DC คือการผูก <strong>Location</strong> (ชื่อและพิกัดอยู่ที่ Location) กับ <strong>Route</strong>. สร้าง Location จากเมนู Locations ก่อน แล้วมาเลือกที่นี่.
           </p>
           <div>
             <label className="block text-sm font-medium text-slate-700">Location *</label>
@@ -115,19 +115,19 @@ function BranchForm({ branch, locations = [], branches = [], dcs = [], onSubmit,
       )}
       {isEdit && (
         <p className="text-sm text-slate-600">
-          ชื่อและพิกัดแก้ที่ <Link to="/locations" className="text-sky-600 hover:underline">Locations</Link>. ด้านล่างแก้เฉพาะ DC ของสาขานี้.
+          ชื่อและพิกัดแก้ที่ <Link to="/locations" className="text-sky-600 hover:underline">Locations</Link>. ด้านล่างแก้เฉพาะ Route ของ DC นี้.
         </p>
       )}
       <div>
-        <label className="block text-sm font-medium text-slate-700">Distribution center (DC)</label>
+        <label className="block text-sm font-medium text-slate-700">Route</label>
         <select
-          value={dc_id}
-          onChange={(e) => setDcId(e.target.value)}
+          value={route_id}
+          onChange={(e) => setRouteId(e.target.value)}
           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
         >
           <option value="">— None —</option>
-          {dcs.map((dc) => (
-            <option key={dc.dc_id} value={dc.dc_id}>{dc.dc_name}</option>
+          {(routes || []).map((r) => (
+            <option key={r.route_id} value={r.route_id}>{r.route_name}</option>
           ))}
         </select>
       </div>
@@ -136,14 +136,14 @@ function BranchForm({ branch, locations = [], branches = [], dcs = [], onSubmit,
           Cancel
         </button>
         <button type="submit" disabled={isSubmitting} className="rounded-md bg-sky-600 px-3 py-2 text-sm text-white hover:bg-sky-500 disabled:opacity-50">
-          {isSubmitting ? 'Saving…' : (branch ? 'Update' : 'Create')}
+          {isSubmitting ? 'Saving…' : (dc ? 'Update' : 'Create')}
         </button>
       </div>
     </form>
   );
 }
 
-export default function BranchesTable() {
+export default function DCsTable() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -151,23 +151,22 @@ export default function BranchesTable() {
   const [error, setError] = useState(null);
 
   const { data = [], isLoading, isError } = useQuery({
-    queryKey: ['branches'],
-    queryFn: getBranches,
+    queryKey: ['dcs'],
+    queryFn: getDCs,
   });
-
   const { data: locations = [] } = useQuery({
     queryKey: ['locations'],
     queryFn: getLocations,
   });
-  const { data: dcs = [] } = useQuery({
-    queryKey: ['dcs'],
-    queryFn: getDCs,
+  const { data: routes = [] } = useQuery({
+    queryKey: ['routes'],
+    queryFn: getRoutes,
   });
 
   const createMutation = useMutation({
-    mutationFn: createBranch,
+    mutationFn: createDC,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] });
+      queryClient.invalidateQueries({ queryKey: ['dcs'] });
       queryClient.invalidateQueries({ queryKey: ['locations'] });
       setModalOpen(false);
       setEditing(null);
@@ -177,9 +176,9 @@ export default function BranchesTable() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }) => updateBranch(id, body),
+    mutationFn: ({ id, body }) => updateDC(id, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] });
+      queryClient.invalidateQueries({ queryKey: ['dcs'] });
       setModalOpen(false);
       setEditing(null);
       setError(null);
@@ -188,32 +187,29 @@ export default function BranchesTable() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deleteBranch,
+    mutationFn: deleteDC,
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dcs'] });
       queryClient.invalidateQueries({ queryKey: ['branches'] });
       setDeleteTarget(null);
-      setError(null);
     },
-    onError: (err) => {
-      setError(err.body?.message || err.message);
-      setDeleteTarget(null);
-    },
+    onError: (err) => setError(err.body?.message || err.message),
   });
 
   const handleSubmit = (values) => {
     setError(null);
     if (editing) {
-      updateMutation.mutate({ id: editing.branch_id, body: values });
+      updateMutation.mutate({ id: editing.dc_id, body: values });
     } else {
       createMutation.mutate(values);
     }
   };
 
-  if (isLoading) return <p className="text-slate-500">Loading branches…</p>;
+  if (isLoading) return <p className="text-slate-500">Loading DCs…</p>;
   if (isError) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
-        Failed to load branches.
+        Failed to load DCs.
       </div>
     );
   }
@@ -221,7 +217,7 @@ export default function BranchesTable() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-800">Branches</h2>
+        <h2 className="text-xl font-semibold text-slate-800">DCs (Distribution Centers)</h2>
         <button
           type="button"
           onClick={() => {
@@ -231,7 +227,7 @@ export default function BranchesTable() {
           }}
           className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
         >
-          Add branch
+          Add DC
         </button>
       </div>
       {error && (
@@ -247,11 +243,11 @@ export default function BranchesTable() {
           setDeleteTarget
         )}
         data={data}
-        filterPlaceholder="Filter branches…"
-        emptyMessage="No branches."
+        filterPlaceholder="Filter DCs…"
+        emptyMessage="No DCs."
       />
       <Modal
-        title={editing ? 'Edit branch' : 'New branch'}
+        title={editing ? 'Edit DC' : 'New DC'}
         open={modalOpen}
         onClose={() => {
           setModalOpen(false);
@@ -259,11 +255,11 @@ export default function BranchesTable() {
           setError(null);
         }}
       >
-        <BranchForm
-          branch={editing}
+        <DCForm
+          dc={editing}
           locations={locations}
-          branches={data}
-          dcs={dcs}
+          dcs={data}
+          routes={routes}
           onSubmit={handleSubmit}
           onCancel={() => setModalOpen(false)}
           isSubmitting={createMutation.isPending || updateMutation.isPending}
@@ -271,9 +267,9 @@ export default function BranchesTable() {
       </Modal>
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Delete branch"
-        message={deleteTarget ? `Delete "${deleteTarget.branch_name}"?` : ''}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.branch_id)}
+        title="Delete DC"
+        message={deleteTarget ? `Delete DC "${deleteTarget.dc_name}"? Branches linked to this DC will have their DC cleared.` : ''}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.dc_id)}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>

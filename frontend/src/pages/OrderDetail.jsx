@@ -77,6 +77,10 @@ export default function OrderDetail() {
             <dd className="mt-1 text-slate-800">{order.branch_name ?? '—'}</dd>
           </div>
           <div>
+            <dt className="text-sm font-medium text-slate-500">DC</dt>
+            <dd className="mt-1 text-slate-800">{order.dc_name ?? '—'}</dd>
+          </div>
+          <div>
             <dt className="text-sm font-medium text-slate-500">Shipment</dt>
             <dd className="mt-1">
               {order.shipment_id != null ? (

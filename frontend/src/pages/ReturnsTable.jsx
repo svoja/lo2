@@ -23,6 +23,8 @@ const columns = (onEdit, onDelete) => [
   },
   { key: 'return_date', label: 'Date', sortable: true },
   { key: 'status', label: 'Status', sortable: true },
+  { key: 'branch_name', label: 'Branch', sortable: true, render: (v) => v || '—' },
+  { key: 'dc_name', label: 'DC', sortable: true, render: (v) => v || '—' },
   {
     key: 'total_volume',
     label: 'Volume',

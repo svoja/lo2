@@ -222,7 +222,11 @@ export default function ShipmentDetail() {
         <dl className="grid gap-3 sm:grid-cols-2">
           <div>
             <dt className="text-xs font-medium uppercase text-slate-500">Origin</dt>
-            <dd className="font-medium text-slate-800">{shipment.origin_branch ?? '—'}</dd>
+            <dd className="font-medium text-slate-800">
+              {shipment.origin_branch != null
+                ? (shipment.origin_is_dc ? `DC: ${shipment.origin_branch}` : shipment.origin_branch)
+                : '—'}
+            </dd>
           </div>
           <div>
             <dt className="text-xs font-medium uppercase text-slate-500">Destination</dt>
@@ -462,6 +466,8 @@ export default function ShipmentDetail() {
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-4 py-2 text-left font-semibold text-slate-700">Order ID</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">Branch</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-700">DC</th>
                   <th className="px-4 py-2 text-left font-semibold text-slate-700">Date</th>
                   <th className="px-4 py-2 text-left font-semibold text-slate-700">Status</th>
                   <th className="px-4 py-2 text-left font-semibold text-slate-700">Amount</th>
@@ -473,6 +479,8 @@ export default function ShipmentDetail() {
                 {ordersInShipment.map((o) => (
                   <tr key={o.order_id} className="hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium text-slate-800">{o.order_id}</td>
+                    <td className="px-4 py-2 text-slate-700">{o.branch_name ?? '—'}</td>
+                    <td className="px-4 py-2 text-slate-700">{o.dc_name ?? '—'}</td>
                     <td className="px-4 py-2 text-slate-700">{o.order_date ?? '—'}</td>
                     <td className="px-4 py-2 text-slate-700">{o.status ?? '—'}</td>
                     <td className="px-4 py-2 tabular-nums text-slate-700">
@@ -515,6 +523,7 @@ export default function ShipmentDetail() {
                       <th className="w-8 px-2 py-2"></th>
                       <th className="px-2 py-2 text-left font-semibold text-slate-700">Order ID</th>
                       <th className="px-2 py-2 text-left font-semibold text-slate-700">Branch</th>
+                      <th className="px-2 py-2 text-left font-semibold text-slate-700">DC</th>
                       <th className="px-2 py-2 text-left font-semibold text-slate-700">Status</th>
                       <th className="px-2 py-2 text-left font-semibold text-slate-700">Amount</th>
                     </tr>
@@ -536,6 +545,7 @@ export default function ShipmentDetail() {
                         </td>
                         <td className="px-2 py-2 font-medium">{o.order_id}</td>
                         <td className="px-2 py-2">{o.branch_name ?? '—'}</td>
+                        <td className="px-2 py-2">{o.dc_name ?? '—'}</td>
                         <td className="px-2 py-2">{o.status ?? '—'}</td>
                         <td className="px-2 py-2 tabular-nums">{o.total_amount != null ? Number(o.total_amount).toLocaleString() : '—'}</td>
                       </tr>

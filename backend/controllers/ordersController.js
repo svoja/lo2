@@ -6,13 +6,18 @@ exports.getAllOrders = (req, res) => {
         SELECT
             o.order_id,
             o.order_date,
+            b.branch_id,
             l.location_name AS branch_name,
+            b.dc_id,
+            l_dc.location_name AS dc_name,
             s.shipment_id,
             o.status,
             o.total_amount
         FROM orders o
         JOIN branch b ON o.branch_id = b.branch_id
         JOIN location l ON b.location_id = l.location_id
+        LEFT JOIN distribution d ON b.dc_id = d.dc_id
+        LEFT JOIN location l_dc ON d.location_id = l_dc.location_id
         LEFT JOIN shipment s ON o.shipment_id = s.shipment_id
         ORDER BY o.order_date DESC, o.order_id DESC
     `;
@@ -123,7 +128,7 @@ exports.getOrderById = async (req, res) => {
     try {
         // 1️⃣ ดึงข้อมูล Order หลัก
         const [orderRows] = await db.promise().query(`
-            SELECT 
+            SELECT
                 o.order_id,
                 o.order_date,
                 o.status,
@@ -132,10 +137,14 @@ exports.getOrderById = async (req, res) => {
                 o.box_count,
                 b.branch_id,
                 l.location_name AS branch_name,
+                b.dc_id,
+                l_dc.location_name AS dc_name,
                 s.shipment_id
             FROM orders o
             JOIN branch b ON o.branch_id = b.branch_id
             JOIN location l ON b.location_id = l.location_id
+            LEFT JOIN distribution d ON b.dc_id = d.dc_id
+            LEFT JOIN location l_dc ON d.location_id = l_dc.location_id
             LEFT JOIN shipment s ON o.shipment_id = s.shipment_id
             WHERE o.order_id = ?
         `, [id]);
@@ -166,35 +175,32 @@ exports.getOrderById = async (req, res) => {
     }
 };
 
-// DELETE order
+// DELETE order — forbidden if referenced by returns (FK RESTRICT)
 exports.deleteOrder = async (req, res) => {
     const { id } = req.params;
 
     try {
-        // เช็คก่อนว่ามี order ไหม
         const [order] = await db.promise().query(
             `SELECT * FROM orders WHERE order_id = ?`,
             [id]
         );
-
         if (order.length === 0) {
             return res.status(404).json({ message: "Order not found" });
         }
 
-        // 1️⃣ ลบ order_details ก่อน
-        await db.promise().query(
-            `DELETE FROM order_details WHERE order_id = ?`,
+        const [used] = await db.promise().query(
+            `SELECT COUNT(*) AS cnt FROM \`returns\` WHERE order_id = ?`,
             [id]
         );
+        if (used[0].cnt > 0) {
+            return res.status(409).json({
+                message: "Cannot delete: this order is linked to returns. Remove or reassign those returns first.",
+            });
+        }
 
-        // 2️⃣ ลบ order
-        await db.promise().query(
-            `DELETE FROM orders WHERE order_id = ?`,
-            [id]
-        );
-
+        await db.promise().query(`DELETE FROM order_details WHERE order_id = ?`, [id]);
+        await db.promise().query(`DELETE FROM orders WHERE order_id = ?`, [id]);
         res.json({ message: "Order deleted successfully" });
-
     } catch (err) {
         res.status(500).json(err);
     }

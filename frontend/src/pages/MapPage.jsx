@@ -7,6 +7,7 @@ import { getDCsByRoute } from '../api/routes';
 import { getDCs } from '../api/dcs';
 import { getBranches } from '../api/branches';
 import { getLocations } from '../api/locations';
+import { getManufacturers } from '../api/manufacturers';
 import { getTrucks } from '../api/trucks';
 import { getShipments, getShipmentRouteStops } from '../api/shipments';
 
@@ -52,6 +53,7 @@ function createIcon(color, label = '') {
 
 const DC_ICON = createIcon('#2563eb', 'DC');
 const BRANCH_ICON = createIcon('#16a34a', 'B');
+const MANUFACTURER_ICON = createIcon('#b45309', 'M');
 const TRUCK_ICON = L.divIcon({
   className: 'custom-marker',
   html: `<div style="
@@ -104,7 +106,7 @@ function MovingTruckMarker({ positions, truck, isPaused }) {
         <br />
         Shipment #{truck.shipment_id} — {truck.status}
         <br />
-        {truck.origin_branch} → … → {truck.destination_branch}
+        {(truck.origin_is_dc ? `DC: ${truck.origin_branch ?? ''}` : truck.origin_branch) ?? '—'} → … → {truck.destination_branch ?? '—'}
       </Popup>
     </Marker>
   );
@@ -114,6 +116,7 @@ export default function MapPage() {
   const { data: routes = [], isLoading: routesLoading } = useQuery({ queryKey: ['routes'], queryFn: getRoutes });
   const { data: locations = [], isLoading: locationsLoading } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
   const { data: dcs = [], isLoading: dcsLoading } = useQuery({ queryKey: ['dcs'], queryFn: getDCs });
+  const { data: manufacturers = [], isLoading: manufacturersLoading } = useQuery({ queryKey: ['manufacturers'], queryFn: getManufacturers });
   const { data: branches = [], isLoading: branchesLoading } = useQuery({ queryKey: ['branches'], queryFn: getBranches });
   const { data: trucks = [], isLoading: trucksLoading } = useQuery({ queryKey: ['trucks'], queryFn: getTrucks });
   const { data: shipments = [], isLoading: shipmentsLoading } = useQuery({ queryKey: ['shipments'], queryFn: getShipments });
@@ -160,8 +163,8 @@ export default function MapPage() {
         const positions = dcsList.map((d) => [Number(d.latitude), Number(d.longitude)]);
         return { name: route.route_name, positions };
       }
-      const start = locationById[route.start_location_id];
-      const end = locationById[route.end_location_id];
+      const start = route.start_location_id != null ? locationById[route.start_location_id] : null;
+      const end = route.end_location_id != null ? locationById[route.end_location_id] : null;
       if (start?.latitude != null && end?.latitude != null) {
         return {
           name: route.route_name,
@@ -198,14 +201,17 @@ export default function MapPage() {
     (dcs || []).forEach((d) => {
       if (d.latitude != null && d.longitude != null) pts.push({ lat: Number(d.latitude), lng: Number(d.longitude) });
     });
+    (manufacturers || []).forEach((m) => {
+      if (m.latitude != null && m.longitude != null) pts.push({ lat: Number(m.latitude), lng: Number(m.longitude) });
+    });
     (branches || []).forEach((b) => {
       if (b.latitude != null && b.longitude != null) pts.push({ lat: Number(b.latitude), lng: Number(b.longitude) });
     });
     truckRoutePolylines.forEach((tr) => tr.positions.forEach(([lat, lng]) => pts.push({ lat, lng })));
     return pts;
-  }, [dcs, branches, truckRoutePolylines]);
+  }, [dcs, manufacturers, branches, truckRoutePolylines]);
 
-  const isLoading = routesLoading || locationsLoading || dcsLoading || branchesLoading || trucksLoading || shipmentsLoading;
+  const isLoading = routesLoading || locationsLoading || dcsLoading || manufacturersLoading || branchesLoading || trucksLoading || shipmentsLoading;
   const dcsLoading_ = dcsByRouteQueries.some((q) => q.isLoading);
 
   if (isLoading || dcsLoading_) {
@@ -221,6 +227,9 @@ export default function MapPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-semibold text-slate-800">Map — Routes, DCs, Branches &amp; active trucks</h2>
         <div className="flex items-center gap-4 text-sm text-slate-600">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-full bg-amber-600" /> Manufacturer
+          </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-full bg-blue-600" /> DC
           </span>
@@ -246,6 +255,22 @@ export default function MapPage() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           {allPoints.length > 0 && <FitBounds points={allPoints} />}
+
+          {/* Manufacturers */}
+          {(manufacturers || []).map((m) => {
+            const lat = m.latitude != null ? Number(m.latitude) : null;
+            const lng = m.longitude != null ? Number(m.longitude) : null;
+            if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) return null;
+            return (
+              <Marker key={`manufacturer-${m.manufacturer_id}`} position={[lat, lng]} icon={MANUFACTURER_ICON}>
+                <Popup>
+                  <strong>Manufacturer</strong> {m.manufacturer_name || m.name}
+                  <br />
+                  <span className="text-slate-500 text-xs">ID: {m.manufacturer_id}</span>
+                </Popup>
+              </Marker>
+            );
+          })}
 
           {/* Route lines (multi-stop through DCs) */}
           {routePolylines.map((r, i) => (
@@ -307,6 +332,7 @@ export default function MapPage() {
                 shipment_id: tr.shipment_id,
                 status: activeShipments.find((s) => s.shipment_id === tr.shipment_id)?.status,
                 origin_branch: activeShipments.find((s) => s.shipment_id === tr.shipment_id)?.origin_branch,
+                origin_is_dc: activeShipments.find((s) => s.shipment_id === tr.shipment_id)?.origin_is_dc,
                 destination_branch: activeShipments.find((s) => s.shipment_id === tr.shipment_id)?.destination_branch,
               }}
               isPaused={false}

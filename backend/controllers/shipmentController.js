@@ -1,16 +1,60 @@
 const db = require('../config/db');
 
-// GET all shipments (with total_volume, cartons, truck_capacity, utilization_percent; origin/dest/truck_id for map)
+// Legacy query when 2-Tier migration not run (no transport_layer, origin_type, manufacturer, truck_type)
+const getAllShipmentsLegacySql = `
+    SELECT 
+        s.shipment_id,
+        s.origin_branch_id,
+        s.origin_dc_id,
+        s.destination_branch_id,
+        s.truck_id,
+        COALESCE(l_dc.location_name, l1.location_name) AS origin_branch,
+        CASE WHEN s.origin_dc_id IS NOT NULL THEN 1 ELSE 0 END AS origin_is_dc,
+        0 AS origin_is_manufacturer,
+        l2.location_name AS destination_branch,
+        t.plate_number AS truck_plate,
+        s.status,
+        s.shipment_type,
+        s.departure_time,
+        s.arrival_time,
+        s.total_volume,
+        (SELECT COALESCE(SUM(o.box_count), 0) FROM shipment_orders so JOIN orders o ON so.order_id = o.order_id WHERE so.shipment_id = s.shipment_id) AS cartons,
+        t.capacity_m3 AS truck_capacity,
+        CASE WHEN t.truck_id IS NOT NULL AND t.capacity_m3 > 0
+             THEN ROUND((s.total_volume / t.capacity_m3) * 100, 2)
+             ELSE NULL END AS utilization_percent
+    FROM shipment s
+    LEFT JOIN distribution d_origin ON s.origin_dc_id = d_origin.dc_id
+    LEFT JOIN location l_dc ON d_origin.location_id = l_dc.location_id
+    LEFT JOIN branch b1 ON s.origin_branch_id = b1.branch_id
+    LEFT JOIN location l1 ON b1.location_id = l1.location_id
+    LEFT JOIN branch b2 ON s.destination_branch_id = b2.branch_id
+    LEFT JOIN location l2 ON b2.location_id = l2.location_id
+    LEFT JOIN truck t ON s.truck_id = t.truck_id
+    ORDER BY s.departure_time DESC
+`;
+
+// GET all shipments (2-Tier: full query, or legacy if migration not run)
 exports.getAllShipments = (req, res) => {
     const sql = `
         SELECT 
             s.shipment_id,
+            s.transport_layer,
+            s.origin_type,
+            s.origin_id,
             s.origin_branch_id,
+            s.origin_dc_id,
+            s.destination_type,
+            s.destination_id,
             s.destination_branch_id,
             s.truck_id,
-            l1.location_name AS origin_branch,
-            l2.location_name AS destination_branch,
+            COALESCE(l_m.location_name, l_dc.location_name, l1.location_name) AS origin_branch,
+            CASE WHEN s.origin_type = 'Manufacturer' OR (s.origin_type IS NULL AND s.origin_dc_id IS NOT NULL) THEN 0
+                 WHEN s.origin_type = 'DC' OR s.origin_dc_id IS NOT NULL THEN 1 ELSE 0 END AS origin_is_dc,
+            CASE WHEN s.origin_type = 'Manufacturer' THEN 1 ELSE 0 END AS origin_is_manufacturer,
+            COALESCE(l2.location_name, l_dest.location_name) AS destination_branch,
             t.plate_number AS truck_plate,
+            t.truck_type AS truck_type,
             s.status,
             s.shipment_type,
             s.departure_time,
@@ -22,29 +66,68 @@ exports.getAllShipments = (req, res) => {
                  THEN ROUND((s.total_volume / t.capacity_m3) * 100, 2)
                  ELSE NULL END AS utilization_percent
         FROM shipment s
-        JOIN branch b1 ON s.origin_branch_id = b1.branch_id
-        JOIN location l1 ON b1.location_id = l1.location_id
-        JOIN branch b2 ON s.destination_branch_id = b2.branch_id
-        JOIN location l2 ON b2.location_id = l2.location_id
+        LEFT JOIN manufacturer m_orig ON s.origin_type = 'Manufacturer' AND s.origin_id = m_orig.manufacturer_id
+        LEFT JOIN location l_m ON m_orig.location_id = l_m.location_id
+        LEFT JOIN distribution d_origin ON (s.origin_type = 'DC' AND s.origin_id = d_origin.dc_id) OR s.origin_dc_id = d_origin.dc_id
+        LEFT JOIN location l_dc ON d_origin.location_id = l_dc.location_id
+        LEFT JOIN branch b1 ON (s.origin_type = 'Branch' AND s.origin_id = b1.branch_id) OR s.origin_branch_id = b1.branch_id
+        LEFT JOIN location l1 ON b1.location_id = l1.location_id
+        LEFT JOIN branch b2 ON (s.destination_type = 'Branch' AND s.destination_id = b2.branch_id) OR s.destination_branch_id = b2.branch_id
+        LEFT JOIN location l2 ON b2.location_id = l2.location_id
+        LEFT JOIN distribution d_dest ON s.destination_type = 'DC' AND s.destination_id = d_dest.dc_id
+        LEFT JOIN location l_dest ON d_dest.location_id = l_dest.location_id
         LEFT JOIN truck t ON s.truck_id = t.truck_id
         ORDER BY s.departure_time DESC
     `;
 
-    db.query(sql, (err, result) => {
-        if (err) return res.status(500).json(err);
-        res.json(result);
-    });
+    const conn = db.promise();
+    conn.query(sql)
+        .then(([result]) => res.json(result))
+        .catch((err) => {
+            const isUnknownColumn = err.code === 'ER_BAD_FIELD' || (err.message && err.message.includes('Unknown column'));
+            if (isUnknownColumn) {
+                return conn.query(getAllShipmentsLegacySql)
+                    .then(([rows]) => {
+                        const normalized = rows.map((r) => ({
+                            ...r,
+                            transport_layer: null,
+                            origin_type: r.origin_dc_id ? 'DC' : (r.origin_branch_id ? 'Branch' : null),
+                            origin_id: r.origin_dc_id || r.origin_branch_id || null,
+                            destination_type: 'Branch',
+                            destination_id: r.destination_branch_id,
+                            truck_type: null,
+                        }));
+                        res.json(normalized);
+                    })
+                    .catch((legacyErr) => {
+                        console.error('getAllShipments legacy SQL error:', legacyErr.message);
+                        res.status(500).json({ message: legacyErr.message, code: legacyErr.code });
+                    });
+            }
+            console.error('getAllShipments SQL error:', err.message);
+            res.status(500).json({ message: err.message, code: err.code });
+        });
 };
 
-// GET shipment by ID (with total_volume, cartons, truck_capacity, utilization_percent, orders, receipt fields)
+// GET shipment by ID (2-Tier: origin/dest from type+id or legacy)
 exports.getShipmentById = async (req, res) => {
     const id = req.params.id;
     const sql = `
         SELECT 
             s.shipment_id,
-            l1.location_name AS origin_branch,
-            l2.location_name AS destination_branch,
+            s.transport_layer,
+            s.origin_type,
+            s.origin_id,
+            s.origin_branch_id,
+            s.origin_dc_id,
+            s.destination_type,
+            s.destination_id,
+            COALESCE(l_m.location_name, l_dc.location_name, l1.location_name) AS origin_branch,
+            CASE WHEN s.origin_type = 'DC' OR s.origin_dc_id IS NOT NULL THEN 1 ELSE 0 END AS origin_is_dc,
+            CASE WHEN s.origin_type = 'Manufacturer' THEN 1 ELSE 0 END AS origin_is_manufacturer,
+            COALESCE(l2.location_name, l_dest.location_name) AS destination_branch,
             t.plate_number AS truck_plate,
+            t.truck_type AS truck_type,
             s.status,
             s.shipment_type,
             s.departure_time,
@@ -58,10 +141,16 @@ exports.getShipmentById = async (req, res) => {
                  THEN ROUND((s.total_volume / t.capacity_m3) * 100, 2)
                  ELSE NULL END AS utilization_percent
         FROM shipment s
-        JOIN branch b1 ON s.origin_branch_id = b1.branch_id
-        JOIN location l1 ON b1.location_id = l1.location_id
-        JOIN branch b2 ON s.destination_branch_id = b2.branch_id
-        JOIN location l2 ON b2.location_id = l2.location_id
+        LEFT JOIN manufacturer m_orig ON s.origin_type = 'Manufacturer' AND s.origin_id = m_orig.manufacturer_id
+        LEFT JOIN location l_m ON m_orig.location_id = l_m.location_id
+        LEFT JOIN distribution d_origin ON (s.origin_type = 'DC' AND s.origin_id = d_origin.dc_id) OR s.origin_dc_id = d_origin.dc_id
+        LEFT JOIN location l_dc ON d_origin.location_id = l_dc.location_id
+        LEFT JOIN branch b1 ON (s.origin_type = 'Branch' AND s.origin_id = b1.branch_id) OR s.origin_branch_id = b1.branch_id
+        LEFT JOIN location l1 ON b1.location_id = l1.location_id
+        LEFT JOIN branch b2 ON (s.destination_type = 'Branch' AND s.destination_id = b2.branch_id) OR s.destination_branch_id = b2.branch_id
+        LEFT JOIN location l2 ON b2.location_id = l2.location_id
+        LEFT JOIN distribution d_dest ON s.destination_type = 'DC' AND s.destination_id = d_dest.dc_id
+        LEFT JOIN location l_dest ON d_dest.location_id = l_dest.location_id
         LEFT JOIN truck t ON s.truck_id = t.truck_id
         WHERE s.shipment_id = ?
     `;
@@ -74,9 +163,14 @@ exports.getShipmentById = async (req, res) => {
         const shipment = rows[0];
 
         const [orders] = await db.promise().query(`
-            SELECT o.order_id, o.order_date, o.status, o.total_amount, o.total_volume, o.box_count
+            SELECT o.order_id, o.order_date, o.status, o.total_amount, o.total_volume, o.box_count,
+                   l.location_name AS branch_name, l_dc.location_name AS dc_name
             FROM shipment_orders so
             JOIN orders o ON so.order_id = o.order_id
+            JOIN branch b ON o.branch_id = b.branch_id
+            JOIN location l ON b.location_id = l.location_id
+            LEFT JOIN distribution d ON b.dc_id = d.dc_id
+            LEFT JOIN location l_dc ON d.location_id = l_dc.location_id
             WHERE so.shipment_id = ?
             ORDER BY o.order_date DESC, o.order_id DESC
         `, [id]);
@@ -122,42 +216,73 @@ exports.getShipmentOrders = async (req, res) => {
     }
 };
 
-// GET shipment route stops (origin, destination, ordered branch stops) for map polyline
+// GET shipment route stops (origin = DC or branch; destination = branch; ordered stops) for map polyline
 exports.getShipmentRouteStops = async (req, res) => {
     const id = req.params.id;
     try {
         const [shipRows] = await db.promise().query(
-            `SELECT s.shipment_id, s.origin_branch_id, s.destination_branch_id
+            `SELECT s.shipment_id, s.origin_type, s.origin_id, s.origin_branch_id, s.origin_dc_id, s.destination_type, s.destination_id, s.destination_branch_id
              FROM shipment s WHERE s.shipment_id = ?`,
             [id]
         );
         if (shipRows.length === 0) {
             return res.status(404).json({ message: 'Shipment not found' });
         }
-        const { origin_branch_id, destination_branch_id } = shipRows[0];
+        const row = shipRows[0];
+        const { origin_type, origin_id, origin_branch_id, origin_dc_id, destination_type, destination_id, destination_branch_id } = row;
 
-        const [originRows] = await db.promise().query(
-            `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
-             FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
-            [origin_branch_id]
-        );
-        const [destRows] = await db.promise().query(
-            `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
-             FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
-            [destination_branch_id]
-        );
-        const origin = originRows[0] ? {
-            branch_id: originRows[0].branch_id,
-            branch_name: originRows[0].branch_name,
-            latitude: originRows[0].latitude,
-            longitude: originRows[0].longitude,
-        } : null;
-        const destination = destRows[0] ? {
-            branch_id: destRows[0].branch_id,
-            branch_name: destRows[0].branch_name,
-            latitude: destRows[0].latitude,
-            longitude: destRows[0].longitude,
-        } : null;
+        let origin = null;
+        if (origin_type === 'Manufacturer' && origin_id != null) {
+            const [mRows] = await db.promise().query(
+                `SELECT m.manufacturer_id, l.location_name AS branch_name, l.latitude, l.longitude
+                 FROM manufacturer m JOIN location l ON m.location_id = l.location_id WHERE m.manufacturer_id = ?`,
+                [origin_id]
+            );
+            if (mRows[0]) {
+                origin = { manufacturer_id: mRows[0].manufacturer_id, branch_name: mRows[0].branch_name, latitude: mRows[0].latitude, longitude: mRows[0].longitude };
+            }
+        }
+        if (origin == null && (origin_type === 'DC' || origin_dc_id != null)) {
+            const id = origin_type === 'DC' ? origin_id : origin_dc_id;
+            const [dcRows] = await db.promise().query(
+                `SELECT d.dc_id, l.location_name AS branch_name, l.latitude, l.longitude
+                 FROM distribution d JOIN location l ON d.location_id = l.location_id WHERE d.dc_id = ?`,
+                [id]
+            );
+            if (dcRows[0]) {
+                origin = { dc_id: dcRows[0].dc_id, branch_name: dcRows[0].branch_name, latitude: dcRows[0].latitude, longitude: dcRows[0].longitude };
+            }
+        }
+        if (origin == null && (origin_type === 'Branch' || origin_branch_id != null)) {
+            const bid = origin_type === 'Branch' ? origin_id : origin_branch_id;
+            const [originRows] = await db.promise().query(
+                `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
+                 FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
+                [bid]
+            );
+            if (originRows[0]) {
+                origin = { branch_id: originRows[0].branch_id, branch_name: originRows[0].branch_name, latitude: originRows[0].latitude, longitude: originRows[0].longitude };
+            }
+        }
+
+        let destination = null;
+        const destId = destination_type === 'DC' ? destination_id : destination_branch_id;
+        if (destination_type === 'DC' && destId != null) {
+            const [dRows] = await db.promise().query(
+                `SELECT d.dc_id, l.location_name AS branch_name, l.latitude, l.longitude
+                 FROM distribution d JOIN location l ON d.location_id = l.location_id WHERE d.dc_id = ?`,
+                [destId]
+            );
+            if (dRows[0]) destination = { dc_id: dRows[0].dc_id, branch_name: dRows[0].branch_name, latitude: dRows[0].latitude, longitude: dRows[0].longitude };
+        }
+        if (destination == null && destId != null) {
+            const [destRows] = await db.promise().query(
+                `SELECT b.branch_id, l.location_name AS branch_name, l.latitude, l.longitude
+                 FROM branch b JOIN location l ON b.location_id = l.location_id WHERE b.branch_id = ?`,
+                [destId]
+            );
+            if (destRows[0]) destination = { branch_id: destRows[0].branch_id, branch_name: destRows[0].branch_name, latitude: destRows[0].latitude, longitude: destRows[0].longitude };
+        }
 
         const [stopRows] = await db.promise().query(
             `SELECT o.branch_id, l.location_name AS branch_name, l.latitude, l.longitude, so.order_id
@@ -224,18 +349,36 @@ exports.createShipment = async (req, res) => {
     }
 };
 
-// UPDATE shipment
+// UPDATE shipment (status; optional origin_branch_id, destination_branch_id, truck_id when draft)
 exports.updateShipment = (req, res) => {
-    const { status } = req.body;
+    const { status, origin_branch_id, destination_branch_id, truck_id } = req.body;
+    const id = req.params.id;
 
-    db.query(
-        'UPDATE shipment SET status=? WHERE shipment_id=?',
-        [status, req.params.id],
-        (err) => {
-            if (err) return res.status(500).json(err);
-            res.json({ message: 'Updated' });
-        }
-    );
+    db.query('SELECT status FROM shipment WHERE shipment_id = ?', [id], (err, rows) => {
+        if (err) return res.status(500).json(err);
+        if (rows.length === 0) return res.status(404).json({ message: 'Shipment not found' });
+        const current = (rows[0].status || '').toLowerCase().replace(/\s+/g, '_');
+        const isDraft = current === 'pending' || current === 'preparing';
+
+        const updates = [];
+        const values = [];
+        if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+        if (isDraft && origin_branch_id !== undefined) { updates.push('origin_branch_id = ?'); values.push(origin_branch_id); }
+        if (isDraft && destination_branch_id !== undefined) { updates.push('destination_branch_id = ?'); values.push(destination_branch_id); }
+        if (isDraft && truck_id !== undefined) { updates.push('truck_id = ?'); values.push(truck_id === '' || truck_id == null ? null : truck_id); }
+        if (updates.length === 0) return res.json({ message: 'Updated' });
+
+        values.push(id);
+        db.query(
+            'UPDATE shipment SET ' + updates.join(', ') + ' WHERE shipment_id = ?',
+            values,
+            (err2, result) => {
+                if (err2) return res.status(500).json(err2);
+                if (result.affectedRows === 0) return res.status(404).json({ message: 'Shipment not found' });
+                res.json({ message: 'Updated' });
+            }
+        );
+    });
 };
 
 // DELETE shipment
@@ -658,10 +801,10 @@ exports.autoAssignTruck = async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // 1️⃣ ดึง shipment volume
+        // 1️⃣ ดึง shipment volume + transport_layer (for truck type filter)
         const [shipment] = await conn.query(
-            `SELECT total_volume 
-             FROM shipment 
+            `SELECT total_volume, COALESCE(transport_layer, 'LastMile') AS transport_layer
+             FROM shipment
              WHERE shipment_id = ?`,
             [id]
         );
@@ -672,16 +815,18 @@ exports.autoAssignTruck = async (req, res) => {
         }
 
         const volume = shipment[0].total_volume;
+        const layer = (shipment[0].transport_layer || 'LastMile').toString();
 
-        // 2️⃣ หา truck ที่เล็กที่สุดแต่พอใส่ได้
+        // 2️⃣ หา truck ที่เล็กที่สุดแต่พอใส่ได้ + ตรงประเภท (Linehaul/LastMile)
         const [truck] = await conn.query(
             `SELECT truck_id, capacity_m3
              FROM truck
              WHERE status = 'available'
+             AND (truck_type = ? OR truck_type IS NULL)
              AND capacity_m3 >= ?
              ORDER BY capacity_m3 ASC
              LIMIT 1`,
-            [volume]
+            [layer, volume]
         );
 
         if (truck.length === 0) {
@@ -721,6 +866,49 @@ exports.autoAssignTruck = async (req, res) => {
     }
 };
 
+// POST Linehaul: Manufacturer → DC (big truck, bulk). Body: { manufacturer_id, dc_id, truck_id?, total_volume? }
+exports.createLinehaul = async (req, res) => {
+    const { manufacturer_id, dc_id, truck_id: bodyTruckId, total_volume } = req.body;
+    if (!manufacturer_id || !dc_id) {
+        return res.status(400).json({ message: 'manufacturer_id and dc_id required' });
+    }
+    const conn = db.promise();
+    try {
+        let truckIdToUse = bodyTruckId != null && bodyTruckId !== '' ? Number(bodyTruckId) : null;
+        if (truckIdToUse != null) {
+            const [truck] = await conn.query(
+                `SELECT truck_id, status, truck_type FROM truck WHERE truck_id = ?`,
+                [truckIdToUse]
+            );
+            if (truck.length === 0) {
+                return res.status(400).json({ message: 'Truck not found' });
+            }
+            if ((truck[0].status || '').toLowerCase() !== 'available') {
+                return res.status(400).json({ message: 'Truck is not available' });
+            }
+            if ((truck[0].truck_type || '').toString() !== 'Linehaul') {
+                return res.status(400).json({ message: 'Use a Linehaul truck for this shipment' });
+            }
+        }
+
+        const vol = total_volume != null && total_volume !== '' ? Number(total_volume) : 0;
+        const [insertResult] = await conn.query(
+            `INSERT INTO shipment (
+                transport_layer, origin_type, origin_id, origin_branch_id, origin_dc_id,
+                destination_type, destination_id, destination_branch_id, truck_id, status, total_volume, shipment_type
+            ) VALUES ('Linehaul', 'Manufacturer', ?, NULL, NULL, 'DC', ?, NULL, ?, 'pending', ?, 'Outbound')`,
+            [manufacturer_id, dc_id, truckIdToUse, vol]
+        );
+
+        if (truckIdToUse != null) {
+            await conn.query(`UPDATE truck SET status = 'busy' WHERE truck_id = ?`, [truckIdToUse]);
+        }
+        res.status(201).json({ message: 'Linehaul shipment created', shipment_id: insertResult.insertId });
+    } catch (err) {
+        res.status(500).json(err);
+    }
+};
+
 const BOX_VOLUME = 0.036;
 
 // POST create shipment with orders (route + dc + branches with items; optional truck_id)
@@ -755,13 +943,12 @@ exports.createWithOrders = async (req, res) => {
             return res.status(400).json({ message: 'At least one branch_id required' });
         }
 
-        const origin_branch_id = branchIds[0];
         const destination_branch_id = branchIds[branchIds.length - 1];
 
         const [shipResult] = await conn.query(
-            `INSERT INTO shipment (origin_branch_id, destination_branch_id, truck_id, status, total_volume, shipment_type)
-             VALUES (?, ?, ?, 'pending', 0, 'Outbound')`,
-            [origin_branch_id, destination_branch_id, truckIdToUse]
+            `INSERT INTO shipment (transport_layer, origin_type, origin_id, origin_dc_id, destination_type, destination_id, destination_branch_id, truck_id, status, total_volume, shipment_type)
+             VALUES ('LastMile', 'DC', ?, ?, 'Branch', ?, ?, ?, 'pending', 0, 'Outbound')`,
+            [dc_id, dc_id, destination_branch_id, destination_branch_id, truckIdToUse]
         );
         const shipment_id = shipResult.insertId;
         let shipmentTotalVolume = 0;
